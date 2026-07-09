@@ -1,0 +1,79 @@
+[
+ {
+  "name": "px2",
+  "desc": "Federation Probe X-2",
+  "velocity": 2.5,
+  "damage": 25.0,
+  "arm_time": 5.0,
+  "max_time_fuse": 20.0,
+  "max_prox": 1200.0,
+  "homing": true,
+  "scan_range": 0.0
+ },
+ {
+  "name": "pxd2",
+  "desc": "Federation Probe Data-2",
+  "velocity": 20.5,
+  "damage": 0.0,
+  "arm_time": 1.0,
+  "max_time_fuse": 30.0,
+  "max_prox": 1200.0,
+  "homing": true,
+  "scan_range": 20000.0
+ },
+ {
+  "name": "klpp",
+  "desc": "Klingon Light Pak Probe",
+  "velocity": 2.0,
+  "damage": 20.0,
+  "arm_time": 6.0,
+  "max_time_fuse": 25.0,
+  "max_prox": 1000.0,
+  "homing": true,
+  "scan_range": 0.0
+ },
+ {
+  "name": "kdat",
+  "desc": "Klingon Data Probe",
+  "velocity": 20.0,
+  "damage": 10.0,
+  "arm_time": 6.0,
+  "max_time_fuse": 25.0,
+  "max_prox": 1000.0,
+  "homing": true,
+  "scan_range": 20000.0
+ },
+ {
+  "name": "dnk",
+  "desc": "Dreadnought Killer (dink)",
+  "velocity": 3.5,
+  "damage": 30.0,
+  "arm_time": 5.0,
+  "max_time_fuse": 12.0,
+  "max_prox": 1500.0,
+  "homing": true,
+  "scan_range": 0.0
+ },
+ {
+  "name": "rdat",
+  "desc": "Romulan version of Klingon Data Probe",
+  "velocity": 20.0,
+  "damage": 10.0,
+  "arm_time": 6.0,
+  "max_time_fuse": 25.0,
+  "max_prox": 1000.0,
+  "homing": true,
+  "scan_range": 20000.0
+ },
+ {
+  "name": "rmpp",
+  "desc": "Romulan Pak Probe",
+  "velocity": 2.0,
+  "damage": 28.0,
+  "arm_time": 6.0,
+  "max_time_fuse": 20.0,
+  "max_prox": 1000.0,
+  "homing": true,
+  "scan_range": 0.0
+ }
+]

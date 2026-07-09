@@ -1,0 +1,25 @@
+{
+ "destruct": [
+  "We'll try to take one with us.",
+  "Good luck.",
+  "This is it.  Going in.",
+  "Stay clear!"
+ ],
+ "retreat": [
+  "Attempting strategic withdrawal.",
+  "We've had it.  I'll try to get out while I can.",
+  "Requesting escort to cover my retreat.",
+  "Shields about gone.  Trying to retreat.",
+  "We're in bad shape.  I'll try to save the ship.",
+  "Sustained heavy damage.  Retreating.",
+  "Heavy losses.  Attempting to retreat.",
+  "Excessive damage.  Leaving the area."
+ ],
+ "insult": [
+  "What was that?  Subspace radio problems...",
+  "Do it yourself.",
+  "Who died and made you commander?",
+  "I'm tired of following your orders.",
+  "What made you think I'd follow your orders?"
+ ]
+}

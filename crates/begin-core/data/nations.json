@@ -1,0 +1,118 @@
+[
+ {
+  "name": "Federation",
+  "adjective": "Federation",
+  "command": "Starfleet Command",
+  "aggression": 0.65,
+  "bravery": 0.95,
+  "loyalty": 1.2,
+  "fanaticism": 0.05,
+  "boarding_level": 0.5,
+  "deviation": 0.3,
+  "endgame_intro": "We have examined your simulation results. ",
+  "endgame": [
+   "Your name will strike terror in our enemies' hearts!",
+   "We find you a worthy starship commander.",
+   "You should be a more aggressive commander.",
+   "Disciplinary action may be recommended.",
+   "You couldn't command a garbage scow.",
+   "Your disgusting performance sickens us!",
+   "You don't deserve to be called a Klingon!"
+  ],
+  "officers": [
+   "Spock",
+   "Sulu",
+   "Chekov",
+   "Uhura",
+   "Scott",
+   "McCoy"
+  ]
+ },
+ {
+  "name": "Klingon Empire",
+  "adjective": "Klingon",
+  "command": "The Imperial Command",
+  "aggression": 0.95,
+  "bravery": 0.5,
+  "loyalty": 0.6,
+  "fanaticism": 0.1,
+  "boarding_level": 0.5,
+  "deviation": 0.2,
+  "endgame_intro": "The review of your simulation records has been completed. ",
+  "endgame": [
+   "It would be an honor to assign you a fleet command!",
+   "Your abilities are admired by many.",
+   "You should be proud of your tactical abilities.",
+   "You show promise as a starship commander.",
+   "Your performance casts a shadow on your family's name.",
+   "The shame of your defeat reflects on all Romulan commanders!",
+   "After this performace you have but one alternative..."
+  ],
+  "officers": [
+   "Martok",
+   "Kurn",
+   "Worf",
+   "Klag",
+   "Kromm",
+   "Knee"
+  ]
+ },
+ {
+  "name": "Romulan Empire",
+  "adjective": "Romulan",
+  "command": "Romulan Fleet Command",
+  "aggression": 0.75,
+  "bravery": 0.95,
+  "loyalty": 1.0,
+  "fanaticism": 0.95,
+  "boarding_level": 0.5,
+  "deviation": 0.1,
+  "endgame_intro": "We have seen the outcome of this simulation. ",
+  "endgame": [
+   "We can't believe it!  What fleet are you trying to join!",
+   "After that impressive performance, the drinks are on you!",
+   "Not bad for someone of your caliber.",
+   "We've seen more exciting simulations.",
+   "After that lousy performance, the drinks are on you!",
+   "A fast exit might have been a better idea.",
+   "What a joke."
+  ],
+  "officers": [
+   "Thei",
+   "Setal",
+   "Movar",
+   "Tal",
+   "Mirok",
+   "Nijil"
+  ]
+ },
+ {
+  "name": "Orion Pirate Fleet",
+  "adjective": "Orion Pirate",
+  "command": "The Orion Pirate Guild",
+  "aggression": 0.45,
+  "bravery": 0.45,
+  "loyalty": 0.45,
+  "fanaticism": 0.45,
+  "boarding_level": 0.75,
+  "deviation": 0.4,
+  "endgame_intro": null,
+  "endgame": [
+   "",
+   null,
+   null,
+   null,
+   "mk7",
+   "Federation Mark 7",
+   null
+  ],
+  "officers": [
+   "Dirk",
+   "Barth",
+   "Maddog",
+   "Sparks",
+   "Jake",
+   "Fred"
+  ]
+ }
+]
