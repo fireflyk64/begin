@@ -12,6 +12,7 @@ pub mod events;
 pub mod game;
 pub mod math;
 pub mod object;
+pub mod orders;
 pub mod scenario;
 pub mod systems;
 

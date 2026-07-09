@@ -1,6 +1,13 @@
 //! The begin2 AI (Part III of AI_AND_COMBAT.md). Preserved exactly —
 //! Daniel spent years tuning it.
 
+pub mod behavior;
+pub mod context;
+pub mod missions;
+pub mod targeting;
+
+pub use context::Ctx;
+
 use crate::data::Nation;
 use crate::game::Game;
 use crate::math::Rng;
@@ -112,5 +119,103 @@ impl Brain {
     }
 }
 
-/// AI dispatcher (`sub_20D55` 62774) — full behavior tree in the AI milestone.
-pub fn ai_think(_g: &mut Game, _id: ObjId) {}
+/// AI dispatcher (`sub_20D55` 62774) — the priority-ordered behavior tree
+/// (§12.2). Reflexes and weapon actions block the rest of the tree for the
+/// cycle; helm orders persist between cycles.
+pub fn ai_think(g: &mut Game, id: ObjId) {
+    if g.get(id).is_none() || g.obj(id).is_hulk() {
+        return;
+    }
+    let mut ctx = Ctx::build(g, id);
+
+    // reflex block (`sub_20C86`)
+    if behavior::reflexes(g, &ctx) {
+        return;
+    }
+
+    // targeting (`sub_1E30D` + `sub_207F9`), then cache target context
+    targeting::select_target(g, &mut ctx);
+
+    // remote-detonate chasing ordnance (`sub_20AF8`)
+    if behavior::remote_detonate(g, &ctx) {
+        return;
+    }
+
+    // weapons block (`sub_20D07`): phasers → torpedoes → probes → boarding
+    if behavior::weapons(g, &mut ctx) {
+        housekeeping(g, &ctx); // keep tubes loading even on weapon cycles
+        return;
+    }
+
+    // Romulans cloak when idle (`sub_20BF2`)
+    if behavior::cloak_when_idle(g, &ctx) {
+        return;
+    }
+
+    let (has_mission, stance) = {
+        let b = &g.obj(id).ship.as_ref().unwrap().brain;
+        (b.mission.is_some(), b.stance)
+    };
+    if has_mission {
+        missions::execute(g, &mut ctx);
+    } else if stance != Stance::Normal {
+        behavior::stance_helm(g, &ctx);
+    } else {
+        behavior::morale(g, &ctx);
+        let stance_now = g.obj(id).ship.as_ref().unwrap().brain.stance;
+        if stance_now != Stance::Normal {
+            behavior::stance_helm(g, &ctx);
+        } else {
+            behavior::default_maneuver(g, &ctx);
+        }
+    }
+
+    housekeeping(g, &ctx);
+}
+
+/// Lock/load housekeeping (`sub_1F09F` 59195): keep tubes loading with the
+/// right prox, keep mounts locked on the target.
+fn housekeeping(g: &mut Game, ctx: &Ctx) {
+    use crate::orders::{self, Mounts};
+    let Some(t) = ctx.target.as_ref() else {
+        // no target: still keep the tubes loading at default prox
+        orders::load_tubes(g, ctx.id, &Mounts::All, None);
+        return;
+    };
+    let tid = t.id;
+    // prox = 100 for slow targets else target_max_warp × 50, capped by design
+    let prox = if t.max_warp <= 2.0 {
+        100.0
+    } else {
+        (t.max_warp * 50.0).min(ctx.torp_max_prox)
+    };
+    let last = g.obj(ctx.id).ship.as_ref().unwrap().brain.last_prox;
+    if (last - prox).abs() > 1.0 {
+        orders::load_tubes(g, ctx.id, &Mounts::All, Some(prox));
+        g.obj_mut(ctx.id).ship.as_mut().unwrap().brain.last_prox = prox;
+    } else {
+        orders::load_tubes(g, ctx.id, &Mounts::All, None);
+    }
+    // lock everything on the target
+    let needs_tube_lock = {
+        let s = g.obj(ctx.id).ship.as_ref().unwrap();
+        s.tubes.iter().any(|tb| !tb.sys.destroyed() && tb.lock != Some(tid))
+    };
+    if needs_tube_lock {
+        let lead = g.obj(ctx.id).ship.as_ref().unwrap().brain.last_lead_offset;
+        orders::lock_tubes(g, ctx.id, &Mounts::All, tid, lead);
+    }
+    let needs_bank_lock = {
+        let s = g.obj(ctx.id).ship.as_ref().unwrap();
+        s.banks.iter().any(|b| !b.sys.destroyed() && b.lock != Some(tid))
+    };
+    if needs_bank_lock {
+        orders::lock_banks(g, ctx.id, &Mounts::All, tid);
+    }
+    // near-future mounts join the party
+    let has_rails = !g.obj(ctx.id).ship.as_ref().unwrap().rails.is_empty();
+    if has_rails {
+        orders::lock_rails(g, ctx.id, &Mounts::All, tid);
+        orders::fire_rails(g, ctx.id, &Mounts::All);
+    }
+}

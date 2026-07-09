@@ -245,6 +245,8 @@ pub struct TorpState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProbeState {
     pub damage: f64,
+    /// remaining structure — point defense can destroy a probe in flight
+    pub hp: f64,
     pub time: f64,
     pub prox: f64,
     pub arm: f64,
