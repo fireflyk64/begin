@@ -3,9 +3,9 @@
 
 mod commands;
 mod fighters;
+mod net;
 mod ui;
 
-use begin_core::object::ObjId;
 use begin_core::scenario::{spawn_fleets, FleetEntry, Scenario, SideConfig};
 use begin_core::{Game, GameData, Tuning};
 use commands::Outcome;
@@ -13,7 +13,17 @@ use std::io::{BufRead, Write};
 use ui::{Display, BGREEN, CYAN, GREEN, GREY, RED, RESET, WHITE};
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    // multiplayer subcommands: `begin host ...` / `begin join <code> ...`
+    let mode = if args.len() > 1 && (args[1] == "host" || args[1] == "join") {
+        args.remove(1)
+    } else {
+        String::new()
+    };
+    let mut server = net::DEFAULT_SERVER.to_string();
+    let mut code = String::new();
+    let mut players: u16 = 2;
+    let mut versus = true;
     let mut tuning = Tuning::default();
     let mut seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -43,42 +53,114 @@ fn main() {
                 i += 1;
                 spawn_body = args.get(i).cloned();
             }
-            "--host" | "--join" => {
-                eprintln!("multiplayer: coming in the lobbylink milestone");
-                std::process::exit(1);
+            "--server" => {
+                i += 1;
+                server = args.get(i).cloned().unwrap_or(server);
+            }
+            "--code" => {
+                i += 1;
+                code = args.get(i).cloned().unwrap_or_default();
+            }
+            "--players" => {
+                i += 1;
+                players = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(2);
+            }
+            "--coop" => versus = false,
+            "--versus" => versus = true,
+            x if mode == "join" && code.is_empty() && !x.starts_with('-') => {
+                code = x.to_string();
             }
             x => {
                 eprintln!("unknown option {x}");
-                eprintln!("usage: begin [--quick] [--seed N] [--planar-lock] [--begin1] [--date YYYY-MM-DD] [--near Body:low|high]");
+                eprintln!("usage: begin [host|join <code>] [--quick] [--seed N] [--planar-lock] [--begin1]");
+                eprintln!("             [--date YYYY-MM-DD] [--near Body:low|high|rings]");
+                eprintln!("             [--server URL] [--code C] [--players N] [--coop|--versus]");
                 std::process::exit(2);
             }
         }
         i += 1;
     }
 
-    let data = GameData::load();
-    let stdin = std::io::stdin();
-    let mut lines = stdin.lock().lines();
-
     println!("{WHITE}BEGIN - A Tactical Starship Simulation{RESET}");
     println!("{GREY}Rust port of Begin 2.00 (c) 1984-1991 Clockwork Software{RESET}");
     println!();
 
-    let (mut game, me, name) = if quick {
-        let mut g = Game::new(data, tuning, seed);
+    if mode == "join" {
+        if code.is_empty() {
+            eprintln!("usage: begin join <code> [--server URL]");
+            std::process::exit(2);
+        }
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        if let Err(e) = rt.block_on(net::run_client(server, code)) {
+            eprintln!("{RED}{e}{RESET}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    let data = GameData::load();
+
+    if mode == "host" {
+        // configure the scenario on the host terminal, then open the room.
+        // NB: the stdin lock must be released before run_host spawns its
+        // own stdin reader thread.
+        let (scenario, name) = if quick {
+            let mut sc = Scenario::duel();
+            sc.epoch_jd = epoch;
+            sc.spawn_body = spawn_body.clone();
+            sc.seed = seed;
+            (sc, "Admiral".to_string())
+        } else {
+            let stdin = std::io::stdin();
+            let mut lines = stdin.lock().lines();
+            match setup_scenario(&data, seed, epoch, spawn_body, &mut lines) {
+                Some(x) => x,
+                None => return,
+            }
+        };
+        let cfg = net::HostConfig {
+            server,
+            code,
+            players,
+            versus,
+            scenario,
+            tuning,
+            seed,
+            name,
+        };
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        if let Err(e) = rt.block_on(net::run_host(cfg)) {
+            eprintln!("{RED}{e}{RESET}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    let stdin = std::io::stdin();
+    let mut lines = stdin.lock().lines();
+
+    let (scenario, name) = if quick {
         let mut sc = Scenario::duel();
         sc.epoch_jd = epoch;
         sc.spawn_body = spawn_body.clone();
         sc.seed = seed;
-        setup_environment(&mut g, &sc);
-        let fleets = spawn_fleets(&mut g, &sc).expect("duel scenario");
-        (g, fleets.flagship.expect("flagship"), "Admiral".to_string())
+        (sc, "Admiral".to_string())
     } else {
-        match interactive_setup(data, tuning, seed, epoch, spawn_body, &mut lines) {
+        match setup_scenario(&data, seed, epoch, spawn_body, &mut lines) {
             Some(x) => x,
             None => return,
         }
     };
+    let mut game = Game::new(data, tuning, seed);
+    setup_environment(&mut game, &scenario);
+    let fleets = match spawn_fleets(&mut game, &scenario) {
+        Ok(f) => f,
+        Err(e) => {
+            println!("{RED}{e}{RESET}");
+            return;
+        }
+    };
+    let me = fleets.flagship.expect("ally flagship");
 
     let side = game.obj(me).nation;
     let mut disp = Display::default();
@@ -155,14 +237,13 @@ fn prompt(msg: &str, lines: &mut std::io::Lines<std::io::StdinLock>) -> Option<S
     lines.next()?.ok().map(|s| s.trim().to_string())
 }
 
-fn interactive_setup(
-    data: GameData,
-    tuning: Tuning,
+fn setup_scenario(
+    data: &GameData,
     seed: u64,
     epoch: f64,
     spawn_body: Option<String>,
     lines: &mut std::io::Lines<std::io::StdinLock>,
-) -> Option<(Game, ObjId, String)> {
+) -> Option<(Scenario, String)> {
     let name = loop {
         let n = prompt("What is your name, commander?", lines)?;
         if !n.is_empty() {
@@ -297,16 +378,5 @@ fn interactive_setup(
         ally.flagship = ally.ships.first().map(|e| e.class.clone());
     }
     let sc = Scenario { ally, enemy, stations: Vec::new(), random_placement, seed, epoch_jd: epoch, spawn_body };
-    let mut g = Game::new(data, tuning, seed);
-    setup_environment(&mut g, &sc);
-    match spawn_fleets(&mut g, &sc) {
-        Ok(fleets) => {
-            let me = fleets.flagship.expect("ally flagship");
-            Some((g, me, name))
-        }
-        Err(e) => {
-            println!("{RED}{e}{RESET}");
-            None
-        }
-    }
+    Some((sc, name))
 }

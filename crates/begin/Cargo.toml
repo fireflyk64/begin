@@ -6,3 +6,7 @@ description = "BEGIN: A Tactical Starship Simulation - terminal game"
 
 [dependencies]
 begin-core = { path = "../begin-core" }
+p2p_lobby_client = { package = "p2p-lobby-client", path = "../../../lobbylink/clients/rust" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+serde_json = "1"
+bytes = "1"
