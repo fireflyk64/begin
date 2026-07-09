@@ -7,8 +7,10 @@ description = "BEGIN: A Tactical Starship Simulation - core simulation engine (n
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+anise = { version = "0.6", optional = true, default-features = false, features = ["metaload"] }
 
 [features]
 default = []
 # High-fidelity solar-system ephemeris via anise + de440.bsp kernels
-spice = []
+# (set BEGIN_SPICE_KERNEL=/path/to/de440.bsp)
+spice = ["dep:anise"]

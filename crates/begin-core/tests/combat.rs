@@ -220,6 +220,7 @@ fn tractor_pulls_target_closer() {
 fn railguns_hit_instantly_within_cone() {
     let mut g = Game::new(GameData::load(), Tuning::default(), 19);
     let sc = Scenario {
+        stations: Vec::new(),
         ally: begin_core::scenario::SideConfig {
             nation: "Terran".into(),
             ships: vec![begin_core::scenario::FleetEntry { class: "Lancer".into(), count: 1 }],
@@ -263,6 +264,7 @@ fn railguns_hit_instantly_within_cone() {
 fn kinetic_rounds_contact_damage_no_splash() {
     let mut g = Game::new(GameData::load(), Tuning::default(), 20);
     let sc = Scenario {
+        stations: Vec::new(),
         ally: begin_core::scenario::SideConfig {
             nation: "Terran".into(),
             ships: vec![begin_core::scenario::FleetEntry { class: "Battlestar".into(), count: 1 }],

@@ -296,7 +296,7 @@ fn interactive_setup(
     if ally.flagship.is_none() {
         ally.flagship = ally.ships.first().map(|e| e.class.clone());
     }
-    let sc = Scenario { ally, enemy, random_placement, seed, epoch_jd: epoch, spawn_body };
+    let sc = Scenario { ally, enemy, stations: Vec::new(), random_placement, seed, epoch_jd: epoch, spawn_body };
     let mut g = Game::new(data, tuning, seed);
     setup_environment(&mut g, &sc);
     match spawn_fleets(&mut g, &sc) {

@@ -15,6 +15,9 @@ impl Game {
         }
         self.cycle += 1;
 
+        // environment: ephemeris positions, stations, ring rocks, hazards
+        crate::env::update(self);
+
         // sensor contact update (§8) — before AI thinks
         crate::systems::sensors::sensor_update(self);
 

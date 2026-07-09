@@ -20,9 +20,21 @@ pub struct SideConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StationSpec {
+    pub class: String,
+    /// Body the station is attached to, at "low" or "geo" orbit.
+    pub body: String,
+    pub orbit: String,
+    pub ally: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scenario {
     pub ally: SideConfig,
     pub enemy: SideConfig,
+    /// Stations attached to named bodies (needs an epoch/environment).
+    #[serde(default)]
+    pub stations: Vec<StationSpec>,
     /// `random` setup: spread ships out of sensor range, fog of war on.
     pub random_placement: bool,
     pub seed: u64,
@@ -46,6 +58,7 @@ impl Scenario {
                 ships: vec![FleetEntry { class: "Battle Cruiser".into(), count: 2 }],
                 flagship: None,
             },
+            stations: Vec::new(),
             random_placement: false,
             seed: 0,
             epoch_jd: 0.0,
@@ -79,11 +92,12 @@ pub fn spawn_fleets(g: &mut Game, sc: &Scenario) -> Result<SpawnedFleets, String
             .nation_idx(&side.nation)
             .ok_or_else(|| format!("unknown nation {}", side.nation))?;
         let _ = nation_idx;
-        // fleet center & facing
+        // fleet center & facing, anchored near a body when configured
+        let anchor = crate::env::spawn_center(g);
         let (center, facing) = if enemy {
-            (Vec3::new(0.0, 20000.0, 0.0), 180.0)
+            (anchor + Vec3::new(0.0, 20000.0, 0.0), 180.0)
         } else {
-            (Vec3::new(0.0, -20000.0, 0.0), 0.0)
+            (anchor + Vec3::new(0.0, -20000.0, 0.0), 0.0)
         };
         let mut used_names: Vec<String> = Vec::new();
         let mut slot = 0usize;
@@ -153,6 +167,34 @@ pub fn spawn_fleets(g: &mut Game, sc: &Scenario) -> Result<SpawnedFleets, String
                 }
                 slot += 1;
             }
+        }
+    }
+    // stations attached to bodies (v2 starbases/outposts, environment-bound)
+    for st in &sc.stations {
+        let nation = if st.ally { &sc.ally.nation } else { &sc.enemy.nation };
+        let Some(found) = g.data.find_class(nation, &st.class) else {
+            return Err(format!("unknown station class {}", st.class));
+        };
+        let name = found.name.clone();
+        let design_idx = g
+            .data
+            .ships
+            .iter()
+            .position(|d| d.name == name && d.nation.eq_ignore_ascii_case(nation))
+            .unwrap();
+        let sname = g.data.ships[design_idx]
+            .ship_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("{} Station", st.body));
+        let id = g
+            .spawn_ship(design_idx, sname, Vec3::ZERO, 0.0, Control::Ai)
+            .ok_or("object arena full")?;
+        crate::env::attach_station(g, id, &st.body, &st.orbit)?;
+        if st.ally {
+            ally_ids.push(id);
+        } else {
+            enemy_ids.push(id);
         }
     }
     g.fog = sc.random_placement;
