@@ -1,0 +1,11 @@
+pub mod boarding;
+pub mod damage;
+pub mod helm;
+pub mod phasers;
+pub mod power;
+pub mod probes;
+pub mod repair;
+pub mod sensors;
+pub mod shields;
+pub mod torpedoes;
+pub mod tractor;

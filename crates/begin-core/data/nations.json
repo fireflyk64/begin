@@ -96,15 +96,15 @@
   "fanaticism": 0.45,
   "boarding_level": 0.75,
   "deviation": 0.4,
-  "endgame_intro": null,
+  "endgame_intro": "The Orion Pirate Guild has tallied the take. ",
   "endgame": [
-   "",
-   null,
-   null,
-   null,
-   "mk7",
-   "Federation Mark 7",
-   null
+   "Legendary!  Every cutthroat in the quadrant knows your name.",
+   "A fine haul.  The Guild drinks to you tonight.",
+   "Profitable enough.  You keep your ship.",
+   "You broke even.  Barely.",
+   "That cargo won't pay for the repairs.",
+   "The Guild is repossessing your ship.",
+   "Pathetic.  Even the Ferengi are laughing."
   ],
   "officers": [
    "Dirk",

@@ -1,0 +1,116 @@
+//! The begin2 AI (Part III of AI_AND_COMBAT.md). Preserved exactly —
+//! Daniel spent years tuning it.
+
+use crate::data::Nation;
+use crate::game::Game;
+use crate::math::Rng;
+use crate::object::ObjId;
+use serde::{Deserialize, Serialize};
+
+/// Mission codes (§12.8, `sub_1F3B8` jump table).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Mission {
+    Escort { ship: ObjId, range: f64 },     // 1
+    Attack { ship: ObjId },                 // 2
+    Course { course: f64 },                 // 3
+    Phaser { ship: ObjId },                 // 4
+    Torpedo { ship: ObjId },                // 5
+    Probe { ship: ObjId },                  // 6
+    Standoff,                               // 7
+    Transport { count: i32, ship: ObjId },  // 8
+    Dock { base: ObjId },                   // 9
+    Undock,                                 // 10
+    Tow { ship: ObjId, dest: ObjId },       // 11
+    Release,                                // 12
+    Recover { ship: ObjId },                // 14
+    Eject { ship: ObjId },                  // 15
+    Approach { ship: ObjId, range: f64 },   // 16
+    Tractor { ship: ObjId },                // 17
+    Stop,                                   // 18
+    Defend { ship: ObjId },                 // 22
+    HoldFire,                               // (order: hold fire)
+}
+
+/// Stance (brain+1Ah).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Stance {
+    Normal,      // 0
+    Retreat,     // 2
+    DestructRam, // 0x15
+}
+
+/// The per-ship AI brain (0xA0 bytes at body+22h; §12.1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Brain {
+    pub target: Option<ObjId>,      // +0
+    pub target_ordered: bool,       // +4
+    pub mission: Option<Mission>,   // +6/+8/+0Ch/+10h
+    pub last_mission_announced: u8, // +18h dedup
+    pub stance: Stance,             // +1Ah
+    pub steering_cooldown: i32,     // +1Ch
+    pub weave_base: f64,            // +1Eh
+    pub weave_amp: f64,             // +2Eh
+    pub weave_side: f64,            // +36h (±1)
+    pub weave_mode: u8,             // +38h (1 toward, 2 away)
+    pub last_prox: f64,             // +3Ah (-1 = unset)
+    pub remote_det_gate: bool,      // +42h
+    pub overheat_latch: bool,       // +46h
+    pub retreat_announced: bool,    // +48h
+    pub strength_phaser: f64,       // +4Ah
+    pub strength_torp: f64,         // +52h
+    pub strength: f64,              // +5Ah
+    pub strength_max: f64,          // +62h (at spawn)
+    pub aggression: f64,            // +6Ah
+    pub bravery: f64,               // +72h
+    pub loyalty: f64,               // +7Ah
+    pub fanaticism: f64,            // +82h
+    pub torp_pressure: i32,         // +8Ah incoming torpedo pressure (0-90)
+    pub last_lead_offset: f64,      // +8Ch
+    pub battery_frac: f64,          // +94h
+    pub shields_starved: bool,      // +9Ch
+    pub hold_fire: bool,            // (order)
+}
+
+impl Brain {
+    /// Personality roll at spawn / capture (`sub_1D4BD` 55844):
+    /// clamp01(nation_value ± uniform(deviation)) per attribute.
+    pub fn roll(nation: &Nation, rng: &mut Rng) -> Brain {
+        let dev = nation.deviation;
+        let aggression = (nation.aggression + rng.range(-dev, dev)).clamp(0.0, 1.0);
+        let bravery = (nation.bravery + rng.range(-dev, dev)).clamp(0.0, 1.0);
+        let loyalty = (nation.loyalty + rng.range(-dev, dev)).clamp(0.0, 1.0);
+        let fanaticism = (nation.fanaticism + rng.range(-dev, dev)).clamp(0.0, 1.0);
+        Brain {
+            target: None,
+            target_ordered: false,
+            mission: None,
+            last_mission_announced: 0,
+            stance: Stance::Normal,
+            steering_cooldown: 2,
+            weave_base: 0.0,
+            weave_amp: 0.0,
+            weave_side: if rng.unit() < 0.5 { -1.0 } else { 1.0 },
+            weave_mode: 1,
+            last_prox: -1.0,
+            remote_det_gate: false,
+            overheat_latch: false,
+            retreat_announced: false,
+            strength_phaser: 0.0,
+            strength_torp: 0.0,
+            strength: 0.0,
+            strength_max: 0.0,
+            aggression,
+            bravery,
+            loyalty,
+            fanaticism,
+            torp_pressure: 0,
+            last_lead_offset: 0.0,
+            battery_frac: 1.0,
+            shields_starved: false,
+            hold_fire: false,
+        }
+    }
+}
+
+/// AI dispatcher (`sub_20D55` 62774) — full behavior tree in the AI milestone.
+pub fn ai_think(_g: &mut Game, _id: ObjId) {}

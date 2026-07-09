@@ -1,0 +1,8 @@
+[package]
+name = "begin"
+version = "0.1.0"
+edition.workspace = true
+description = "BEGIN: A Tactical Starship Simulation - terminal game"
+
+[dependencies]
+begin-core = { path = "../begin-core" }

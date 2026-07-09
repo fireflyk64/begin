@@ -134,6 +134,22 @@ ships = [decode_ship(b) for b in bases]
 # 7 rating-message ptrs. The 6 bridge-officer names sit just BEFORE each
 # nation struct (verified: Spock/Sulu/... before Federation, Martok/Kurn/
 # Worf/... before Klingon).
+# The Orion struct is truncated in the binary (the torpedo design array
+# begins right after it) and carries no endgame messages; supply
+# pirate-flavored stand-ins so every nation has a full table.
+ORION_FALLBACK = {
+    'endgame_intro': 'The Orion Pirate Guild has tallied the take. ',
+    'endgame': [
+        "Legendary!  Every cutthroat in the quadrant knows your name.",
+        "A fine haul.  The Guild drinks to you tonight.",
+        "Profitable enough.  You keep your ship.",
+        "You broke even.  Barely.",
+        "That cargo won't pay for the repairs.",
+        "The Guild is repossessing your ship.",
+        "Pathetic.  Even the Ferengi are laughing.",
+    ],
+}
+
 nation_ptrs = sorted(set(s['_nation_ptr'] for s in ships))
 nations = []
 for b in nation_ptrs:
@@ -151,6 +167,9 @@ for b in nation_ptrs:
         'endgame': [cstr(farptr(b + 0x48 + 4 * k)) for k in range(7)],
         'officers': [cstr(farptr(b - 0x18 + 4 * k)) for k in range(6)],
     })
+    if not nations[-1]['endgame_intro'] or not all(nations[-1]['endgame']):
+        nations[-1]['endgame_intro'] = ORION_FALLBACK['endgame_intro']
+        nations[-1]['endgame'] = ORION_FALLBACK['endgame']
 for s in ships:
     s['nation'] = nations[nation_ptrs.index(s['_nation_ptr'])]['adjective']
     del s['_nation_ptr']
