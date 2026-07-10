@@ -197,6 +197,16 @@ impl<'a> Parser<'a> {
             "tell" | "order" => self.cmd_tell(),
             "launch" => self.cmd_launch_fighters(),
             "recover" => self.cmd_recover_fighters(),
+            "flash" | "flashes" => {
+                let on = self.peek() != Some("off");
+                self.disp.flash = on;
+                self.say(if on {
+                    "Weapon flashes on."
+                } else {
+                    "Weapon flashes off."
+                });
+                Ok(Outcome::Stay)
+            }
             "planarlock" => {
                 let on = self.peek() == Some("on");
                 self.g.tuning.planar_lock = on;
@@ -250,16 +260,17 @@ impl<'a> Parser<'a> {
     // ---- weapons ----
 
     fn cmd_fire(&mut self) -> R {
-        if self.peek() == Some("all") {
-            // "fire all phasers/torpedoes/tubes/probes"
+        let all = self.peek() == Some("all");
+        if all {
+            // "fire all phasers/banks/torpedoes/tubes/probes"
             self.i += 1;
         }
         match self.peek() {
-            Some("phasers" | "phaser") => {
+            Some("phasers" | "phaser" | "banks" | "bank") => {
                 self.i += 1;
-                self.cmd_fire_phasers()
+                self.fire_phasers_args(all)
             }
-            Some("torpedoes" | "torpedos" | "torpedo" | "torp" | "torps" | "tubes") => {
+            Some("torpedoes" | "torpedos" | "torpedo" | "torp" | "torps" | "tubes" | "tube") => {
                 self.i += 1;
                 self.cmd_fire_torps()
             }
@@ -271,21 +282,56 @@ impl<'a> Parser<'a> {
                 self.i += 1;
                 self.cmd_fire_rails()
             }
-            _ => Err("Fire what?  (phasers, torpedoes, probes, rails)".into()),
+            _ => Err("Fire what?  (phasers/banks, torpedoes/tubes, probes, rails)".into()),
         }
     }
 
     fn cmd_fire_phasers(&mut self) -> R {
-        if matches!(self.peek(), Some("phasers" | "all")) {
+        // top-level "phaser all 45" entry
+        let mut all = false;
+        while matches!(self.peek(), Some("phasers" | "phaser" | "banks" | "bank" | "all")) {
+            if self.peek() == Some("all") {
+                all = true;
+            }
             self.i += 1;
         }
-        let which = self.mounts();
-        let spread = if self.peek() == Some("spread") {
+        self.fire_phasers_args(all)
+    }
+
+    /// Manual §VI: `[Fire] Phasers <list> [SPREAD] <spread>`,
+    /// `Fire [ALL] Phasers [SPREAD] <spread>` — after ALL any number is the
+    /// spread; in list form, numbers >= 10 (SPREAD_MIN, banks never reach
+    /// index 10) are the spread.
+    fn fire_phasers_args(&mut self, mut all: bool) -> R {
+        const SPREAD_MIN: f64 = 10.0;
+        while matches!(self.peek(), Some("phasers" | "phaser" | "banks" | "bank")) {
             self.i += 1;
-            self.number()
-        } else {
-            self.number()
-        };
+        }
+        if self.peek() == Some("all") {
+            all = true;
+            self.i += 1;
+        }
+        let mut list: Vec<usize> = Vec::new();
+        let mut spread: Option<f64> = None;
+        loop {
+            match self.peek() {
+                Some("spread" | "dispersion") => {
+                    self.i += 1;
+                    spread = self.number();
+                }
+                Some(t) => {
+                    let Ok(v) = t.parse::<f64>() else { break };
+                    self.i += 1;
+                    if spread.is_none() && (all || v >= SPREAD_MIN) {
+                        spread = Some(v);
+                    } else {
+                        list.push(v as usize);
+                    }
+                }
+                None => break,
+            }
+        }
+        let which = if all || list.is_empty() { Mounts::All } else { Mounts::List(list) };
         let n = orders::fire_phasers(self.g, self.me, &which, spread);
         if n == 0 {
             return Err("No phaser banks ready to fire.".into());
@@ -294,7 +340,10 @@ impl<'a> Parser<'a> {
     }
 
     fn cmd_fire_torps(&mut self) -> R {
-        if self.peek() == Some("all") {
+        while matches!(
+            self.peek(),
+            Some("all" | "torpedoes" | "torpedos" | "torpedo" | "torps" | "tubes" | "tube")
+        ) {
             self.i += 1;
         }
         let which = self.mounts();
@@ -367,9 +416,19 @@ impl<'a> Parser<'a> {
                 if ship == self.me {
                     return Err("We can't lock weapons on ourselves.".into());
                 }
-                orders::lock_tubes(self.g, self.me, &which, ship, 0.0);
+                // `lock tubes on X [dispersion 20]` — fan the salvo (begin2's
+                // third lock-tubes prompt); a bare trailing number counts too
+                if matches!(self.peek(), Some("dispersion" | "spread")) {
+                    self.i += 1;
+                }
+                let disp = self.number().unwrap_or(0.0);
+                orders::lock_tubes(self.g, self.me, &which, ship, 0.0, disp);
                 let name = self.g.obj(ship).name.clone();
-                self.officer(format!("Tubes locked on the {name}."));
+                self.officer(if disp > 0.0 {
+                    format!("Tubes locked on the {name}, dispersion {disp:.0}.")
+                } else {
+                    format!("Tubes locked on the {name}.")
+                });
                 Ok(Outcome::Advance)
             }
             Some("rails" | "rail") => {
@@ -406,7 +465,11 @@ impl<'a> Parser<'a> {
             Some("tubes" | "tube") => {
                 let which = self.mounts();
                 let mark = self.number().ok_or("Mark angle?")?;
-                orders::turn_tubes(self.g, self.me, &which, mark);
+                if matches!(self.peek(), Some("dispersion" | "spread")) {
+                    self.i += 1;
+                }
+                let disp = self.number().unwrap_or(0.0);
+                orders::turn_tubes(self.g, self.me, &which, mark, disp);
                 Ok(Outcome::Advance)
             }
             Some("probe" | "probes") => {
@@ -448,7 +511,7 @@ impl<'a> Parser<'a> {
                     self.i += 1;
                 }
                 let prox = self.number().unwrap_or(0.0);
-                if self.peek() == Some("time") {
+                if matches!(self.peek(), Some("time" | "fuse")) {
                     self.i += 1;
                 }
                 let time = self.number().unwrap_or(0.0);
@@ -456,7 +519,19 @@ impl<'a> Parser<'a> {
                 if n == 0 {
                     return Err("No launchers could be loaded.".into());
                 }
-                self.officer(format!("{n} probe(s) loaded."));
+                // report the fuse settings actually applied (design-clamped)
+                let detail = {
+                    let s = self.g.obj(self.me).ship.as_ref().unwrap();
+                    s.launchers
+                        .iter()
+                        .find_map(|l| l.loaded.as_ref())
+                        .map(|p| {
+                            let name = &self.g.data.probes[p.design].name;
+                            format!("{n} {name} probe(s) loaded, prox {:.0}, time fuse {:.0}.", p.prox, p.time)
+                        })
+                        .unwrap_or_else(|| format!("{n} probe(s) loaded."))
+                };
+                self.officer(detail);
                 Ok(Outcome::Advance)
             }
             _ => Err("Load what?  (tubes, launchers)".into()),
@@ -850,13 +925,19 @@ impl<'a> Parser<'a> {
     }
 
     fn status_probes(&mut self) -> R {
-        self.header("PROBE STATUS:");
-        self.table_line("Code   Course  Bearing  Range  Time  Range/Target");
         let side = self.g.obj(self.me).nation;
-        for p in self.g.probe_ids() {
-            if self.g.obj(p).owner != Some(self.me) {
-                continue;
-            }
+        let mine: Vec<ObjId> = self
+            .g
+            .probe_ids()
+            .into_iter()
+            .filter(|&p| self.g.obj(p).owner == Some(self.me))
+            .collect();
+        if mine.is_empty() {
+            return Err("We haven't any probes active.".into());
+        }
+        self.header("PROBE STATUS:");
+        self.table_line("Code   Course  Bearing  Range  Prox  Time  Status  Range/Target");
+        for p in mine {
             let o = self.g.obj(p);
             let st = o.probe.as_ref().unwrap();
             let (bearing, _) =
@@ -870,9 +951,10 @@ impl<'a> Parser<'a> {
                 }
                 None => "....".into(),
             };
+            let status = if st.arm > 0.0 { format!("arm {:.0}", st.arm) } else { "armed".into() };
             let line = format!(
-                "{:<6} {:>5.0}  {:>6.0}  {:>5.0}  {:>4.0}  {}",
-                st.code, o.course, bearing, range, st.time, tail
+                "{:<6} {:>5.0}  {:>6.0}  {:>5.0}  {:>4.0}  {:>4.0}  {:<6}  {}",
+                st.code, o.course, bearing, range, st.prox, st.time, status, tail
             );
             self.table_line(&line);
         }
@@ -1038,13 +1120,14 @@ impl<'a> Parser<'a> {
     fn cmd_help(&mut self) -> R {
         let lines = [
             "Helm:     helm [course] C[^MARK] [warp] W | pursue/elude <ship> [W] | warp W",
-            "Weapons:  fire [all] phasers [spread S] | fire torpedoes <list> | fire probes at <ship>",
-            "          lock banks/tubes [list] on <ship> | turn banks/tubes <list> <mark>",
-            "          load tubes [prox P] | load launchers [prox P time T] | fire rails",
+            "Weapons:  fire [all] banks/phasers [list] [spread 10-45]   (fire all banks 45)",
+            "          fire torpedoes <list> | fire probes at <ship> | fire rails",
+            "          lock banks/tubes [list] on <ship> [dispersion D] | turn banks/tubes <list> M [D]",
+            "          load tubes [prox P] | load launchers [prox P] [time T]",
             "Shields:  raise/lower shields | reenforce <#>",
             "Status:   report | damage | scan <ship|range> | banks|tubes|launchers|shields|probes|fleet",
             "Other:    transport N <ship> | tractor <ship>|off | board <ship> | dock <base> | cloak on",
-            "          repair <system>|all | destruct | abort | detonate probe <code> | chart | quit",
+            "          repair <system>|all | destruct | abort | detonate probe <code>|all | flash off",
             "Allies:   tell <ally|group N|all> attack <ship> | course C | escort <ship> R | standoff",
             "          ... torpedo/phaser/probe <ship> | dock <base> | tow <ship> <dest> | defend <ship>",
             "Library:  computer ship <nation> <class> | computer torpedo [t] | computer probe [p]",
@@ -1080,18 +1163,30 @@ impl<'a> Parser<'a> {
     }
 
     fn cmd_detonate(&mut self) -> R {
-        if matches!(self.peek(), Some("probe" | "probes")) {
+        while matches!(self.peek(), Some("probe" | "probes")) {
             self.i += 1;
         }
         self.cmd_detonate_probe()
     }
 
+    /// `detonate probe <code>` / `detonate [all] probes` — remote-detonate.
     fn cmd_detonate_probe(&mut self) -> R {
-        let code = self.next().ok_or("Which probe (control code)?")?.to_string();
+        while matches!(self.peek(), Some("probe" | "probes")) {
+            self.i += 1;
+        }
+        if matches!(self.peek(), Some("all") | None) {
+            let n = begin_core::systems::probes::detonate_all(self.g, self.me);
+            if n == 0 {
+                return Err("We don't have any active probes.".into());
+            }
+            self.officer("Detonating all our active probes!".into());
+            return Ok(Outcome::Advance);
+        }
+        let code = self.next().unwrap().to_string();
         let probe = begin_core::systems::probes::probe_by_code(self.g, self.me, &code)
-            .ok_or("No such probe.")?;
+            .ok_or("No probe responds to that code.")?;
         begin_core::systems::probes::detonate_probe(self.g, probe);
-        self.officer(format!("Probe {code} detonated."));
+        self.officer(format!("Probe \"{code}\" detonated."));
         Ok(Outcome::Advance)
     }
 

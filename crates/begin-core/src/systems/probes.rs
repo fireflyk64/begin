@@ -65,6 +65,8 @@ pub fn launcher_step(g: &mut Game) {
             (o.pos, o.course, o.mark, o.nation, o.name.clone());
         let n_nations = g.data.nations.len();
         let mut launched = 0;
+        // (code, target name or course) for the launch report
+        let mut manifest: Vec<(String, String)> = Vec::new();
         for k in firing {
             let (mut state, at_target, course_order) = {
                 let l = &mut g.obj_mut(id).ship.as_mut().unwrap().launchers[k];
@@ -80,6 +82,13 @@ pub fn launcher_step(g: &mut Game) {
             } else {
                 (norm360(course_order), my_mark)
             };
+            manifest.push((
+                state.code.clone(),
+                match target {
+                    Some(t) => format!("at the {}", g.obj(t).name),
+                    None => format!("course {course:.0}"),
+                },
+            ));
             let name = pd.name.clone();
             let probe = Object {
                 kind: Kind::Probe,
@@ -113,9 +122,16 @@ pub fn launcher_step(g: &mut Game) {
             }
         }
         if launched > 0 {
-            let plural = if launched == 1 { "a probe" } else { "probes" };
-            g.say(None, "", format!("{my_name} launching {plural}!"), ReportKind::Info);
-            // sensor notice like the original "** kdat **"
+            let plural = if launched == 1 { "probe" } else { "probes" };
+            let codes: Vec<&str> = manifest.iter().map(|(c, _)| c.as_str()).collect();
+            // all launched the same way this order → one suffix
+            let dest = manifest.first().map(|(_, d)| d.clone()).unwrap_or_default();
+            g.say(
+                None,
+                "",
+                format!("{my_name} launching {plural} \"{}\" {dest}!", codes.join("\", \"")),
+                ReportKind::Info,
+            );
         }
     }
 }
@@ -153,6 +169,20 @@ pub fn detonate_probe(g: &mut Game, probe: ObjId) {
         p.remote_detonate = true;
     }
     o.det = Det::Detonate;
+}
+
+/// Remote-detonate every active probe belonging to `owner` (begin2:
+/// "Detonating all our active probes!"). Returns how many.
+pub fn detonate_all(g: &mut Game, owner: ObjId) -> usize {
+    let mine: Vec<ObjId> = g
+        .probe_ids()
+        .into_iter()
+        .filter(|&p| g.obj(p).owner == Some(owner))
+        .collect();
+    for &p in &mine {
+        detonate_probe(g, p);
+    }
+    mine.len()
 }
 
 /// Find a live probe owned by `owner` with the given control code.

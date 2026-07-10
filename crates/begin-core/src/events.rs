@@ -33,11 +33,22 @@ impl Report {
     }
 }
 
+/// A transient visual effect the front-end may overlay on its scope for a
+/// fraction of a second (phaser fire, detonations). Purely cosmetic.
+#[derive(Debug, Clone, Copy)]
+pub enum Flash {
+    /// Hitscan beam (phaser or railgun) from a ship along its firing axis.
+    Beam { from: crate::math::Vec3, to: crate::math::Vec3 },
+    /// A detonation with its splash radius.
+    Blast { pos: crate::math::Vec3, radius: f64 },
+}
+
 /// Collects the lines produced during a cycle. Front-ends (or the multiplayer
 /// host) take the whole batch after each cycle and filter per viewer side.
 #[derive(Debug, Default)]
 pub struct Reporter {
     pub lines: Vec<Report>,
+    pub flashes: Vec<Flash>,
 }
 
 impl Reporter {
@@ -53,5 +64,8 @@ impl Reporter {
     }
     pub fn take(&mut self) -> Vec<Report> {
         std::mem::take(&mut self.lines)
+    }
+    pub fn take_flashes(&mut self) -> Vec<Flash> {
+        std::mem::take(&mut self.flashes)
     }
 }

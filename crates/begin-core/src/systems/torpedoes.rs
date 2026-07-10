@@ -271,6 +271,7 @@ pub fn prox_fuses(g: &mut Game) {
 /// fuses (torp expiry fizzles, probe expiry detonates), ship self-destruct
 /// countdowns.
 pub fn fuse_step(g: &mut Game) {
+    let mut countdowns: Vec<(String, i32)> = Vec::new();
     for id in g.ids() {
         let o = g.obj_mut(id);
         match o.kind {
@@ -297,14 +298,26 @@ pub fn fuse_step(g: &mut Game) {
                 }
             }
             Kind::Ship => {
+                let name = o.name.clone();
                 let s = o.ship.as_mut().unwrap();
                 if s.destruct_countdown >= 0.0 {
                     s.destruct_countdown -= 1.0;
                     if s.destruct_countdown <= 0.0 && o.det == Det::None {
                         o.det = Det::Detonate;
+                    } else if s.destruct_countdown > 0.0 {
+                        countdowns.push((name, s.destruct_countdown as i32));
                     }
                 }
             }
         }
+    }
+    for (name, k) in countdowns {
+        let plural = if k == 1 { "" } else { "s" };
+        g.say(
+            None,
+            "",
+            format!("The {name} will self destruct in {k} cycle{plural}!"),
+            crate::events::ReportKind::Alert,
+        );
     }
 }

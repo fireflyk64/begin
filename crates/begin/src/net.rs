@@ -280,6 +280,7 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
             game.run_cycle();
             crate::fighters::absorb_docked_fighters(&mut game);
             let reports = game.reporter.take();
+            let flashes = game.take_flashes();
             for (_pid, seat) in seats.iter_mut() {
                 seat.submitted = false;
                 if let Some(s) = seat.ship.filter(|&s| game.get(s).is_some()) {
@@ -305,6 +306,27 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
             if my_alive {
                 push_chart(&game, my_ship, &mut my_disp);
             }
+            // brief weapon-flash frame first (clients pause on flash:true),
+            // then the settled frame
+            if !flashes.is_empty() {
+                for (pid, seat) in seats.iter() {
+                    if seat.connected && seat.disp.flash && seat.ship.is_some() {
+                        let f = render_for_flash(&game, seat, &flashes);
+                        let payload = serde_json::json!({"t":"frame","data":f,"flash":true});
+                        let _ = lobby
+                            .send_reliable(*pid, bytes::Bytes::from(payload.to_string()))
+                            .await;
+                    }
+                }
+                if my_disp.flash && my_alive {
+                    let frame = ui::render(&game, my_ship, &my_disp, &cfg.name, &flashes);
+                    let mut out = std::io::stdout().lock();
+                    let _ = out.write_all(frame.as_bytes());
+                    let _ = out.flush();
+                    drop(out);
+                    tokio::time::sleep(std::time::Duration::from_millis(140)).await;
+                }
+            }
             for (pid, seat) in seats.iter() {
                 if seat.connected {
                     let f = render_for(&game, seat);
@@ -313,6 +335,9 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
             }
             draw_local(&game, my_ship.filter(|&s| game.get(s).is_some()), &my_disp, &cfg.name);
             if game.over.is_some() || !my_alive {
+                // leave the final frame up for a few seconds before the
+                // evaluations land
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 break 'outer;
             }
         }
@@ -329,10 +354,13 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
             .and_then(|s| game.get(s).map(|o| o.nation))
             .unwrap_or(host_side);
         let (_t, text) = game.evaluation(side);
-        let _ = lobby.send_reliable(*pid, msg("over", "text", &text)).await;
+        let n = &game.data.nations[side];
+        let labeled = format!("{} \u{2014} {}\r\n{text}", n.name, n.command);
+        let _ = lobby.send_reliable(*pid, msg("over", "text", &labeled)).await;
     }
     let (_t, text) = game.evaluation(host_side);
-    println!("\r\n{WHITE}{}{RESET}\r\n{GREEN}{text}{RESET}", game.data.nations[host_side].command);
+    let n = &game.data.nations[host_side];
+    println!("\r\n{WHITE}{} \u{2014} {}{RESET}\r\n{GREEN}{text}{RESET}", n.name, n.command);
     // let the reliable channel flush the evaluations before we leave
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
     lobby.close().await?;
@@ -351,11 +379,15 @@ fn push_chart(game: &Game, ship: Option<ObjId>, disp: &mut Display) {
 }
 
 fn render_for(game: &Game, seat: &Seat) -> String {
-    ui::render(game, seat.ship.filter(|&s| game.get(s).is_some()), &seat.disp, &seat.name)
+    ui::render(game, seat.ship.filter(|&s| game.get(s).is_some()), &seat.disp, &seat.name, &[])
+}
+
+fn render_for_flash(game: &Game, seat: &Seat, flashes: &[begin_core::events::Flash]) -> String {
+    ui::render(game, seat.ship.filter(|&s| game.get(s).is_some()), &seat.disp, &seat.name, flashes)
 }
 
 fn draw_local(game: &Game, ship: Option<ObjId>, disp: &Display, name: &str) {
-    let frame = ui::render(game, ship, disp, name);
+    let frame = ui::render(game, ship, disp, name, &[]);
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(frame.as_bytes());
     let _ = out.flush();
@@ -415,9 +447,16 @@ pub async fn run_client(server: String, code: String) -> Result<(), Box<dyn std:
                         let Ok(v) = serde_json::from_slice::<serde_json::Value>(&data) else { continue };
                         match v["t"].as_str() {
                             Some("frame") => {
-                                let mut out = std::io::stdout().lock();
-                                let _ = out.write_all(v["data"].as_str().unwrap_or("").as_bytes());
-                                let _ = out.flush();
+                                {
+                                    let mut out = std::io::stdout().lock();
+                                    let _ = out.write_all(v["data"].as_str().unwrap_or("").as_bytes());
+                                    let _ = out.flush();
+                                }
+                                // hold weapon-flash frames briefly; the
+                                // settled frame follows right behind
+                                if v["flash"].as_bool().unwrap_or(false) {
+                                    tokio::time::sleep(std::time::Duration::from_millis(140)).await;
+                                }
                             }
                             Some("info") => println!("{GREY}{}{RESET}", v["text"].as_str().unwrap_or("")),
                             Some("over") => {

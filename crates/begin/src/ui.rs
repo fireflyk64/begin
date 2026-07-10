@@ -44,11 +44,13 @@ impl Line {
 pub struct Display {
     pub scroll: Vec<Line>,
     pub scan_range: f64,
+    /// Render brief weapon-fire/detonation flash frames (`flash off` disables).
+    pub flash: bool,
 }
 
 impl Default for Display {
     fn default() -> Self {
-        Display { scroll: Vec::new(), scan_range: 24000.0 }
+        Display { scroll: Vec::new(), scan_range: 24000.0, flash: true }
     }
 }
 
@@ -153,14 +155,24 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
-/// Render the full frame for a viewer.
-pub fn render(g: &Game, viewer: Option<ObjId>, disp: &Display, prompt_name: &str) -> String {
+/// Render the full frame for a viewer. `flashes` (usually empty) overlays
+/// transient weapon effects on the scope — used for the brief flash frame.
+pub fn render(
+    g: &Game,
+    viewer: Option<ObjId>,
+    disp: &Display,
+    prompt_name: &str,
+    flashes: &[begin_core::events::Flash],
+) -> String {
     let mut grid: Vec<Vec<(char, &'static str)>> =
         vec![vec![(' ', GREEN); SCREEN_W]; SCREEN_H - 1];
 
     // ---- right panels
     if let Some(v) = viewer.filter(|&v| g.get(v).is_some()) {
         draw_scope(g, v, disp, &mut grid);
+        if !flashes.is_empty() {
+            draw_flashes(g, v, disp, flashes, &mut grid);
+        }
         draw_status_panel(g, v, &mut grid);
     }
 
@@ -278,7 +290,10 @@ fn draw_scope(g: &Game, viewer: ObjId, disp: &Display, grid: &mut [Vec<(char, &'
                 put_str(grid, row, col.min(SCREEN_W - 2), &tag, color);
             }
             Kind::Torp => {
-                put(grid, row, col, '.', if hostile { RED } else { YELLOW });
+                // begin2 draws torpedoes as a two-dot streak
+                let color = if hostile { RED } else { YELLOW };
+                put(grid, row, col, '\u{b7}', color);
+                put(grid, row, (col + 1).min(BOX_X + iw), '\u{b7}', color);
             }
             Kind::Probe => {
                 put(grid, row, col, 'o', if hostile { RED } else { YELLOW });
@@ -303,6 +318,70 @@ fn draw_scope(g: &Game, viewer: ObjId, disp: &Display, grid: &mut [Vec<(char, &'
     // scanning range caption
     let caption = format!("Scanning range: {:>6.0}", disp.scan_range);
     put_str(grid, r1 - 1, BOX_X + 2, &caption, GREEN);
+}
+
+/// Overlay transient weapon effects on the scope: phaser/rail beams as a
+/// line of stars, detonations as a blast disc. Drawn only on the brief
+/// flash frame between cycles (`flash off` disables it).
+fn draw_flashes(
+    g: &Game,
+    viewer: ObjId,
+    disp: &Display,
+    flashes: &[begin_core::events::Flash],
+    grid: &mut [Vec<(char, &'static str)>],
+) {
+    use begin_core::events::Flash;
+    let (r0, r1) = (0usize, 13usize);
+    let iw = BOX_W - 2;
+    let ih = r1 - r0 - 1;
+    let center = g.obj(viewer).pos;
+    let range = disp.scan_range.max(100.0);
+    let half_w = (iw / 2) as f64;
+    let half_h = (ih / 2) as f64;
+    let cell = |dx: f64, dy: f64| -> Option<(usize, usize)> {
+        if dx.abs() > range || dy.abs() > range {
+            return None;
+        }
+        let col = ((dx / range) * half_w).round() as isize + half_w as isize;
+        let row = (-(dy / range) * half_h).round() as isize + half_h as isize + 1;
+        if col < 0 || col >= iw as isize || row < 1 || row > ih as isize {
+            return None;
+        }
+        Some((r0 + row as usize, BOX_X + 1 + col as usize))
+    };
+    for f in flashes {
+        match *f {
+            Flash::Beam { from, to } => {
+                let d = to - from;
+                for s in 1..=48 {
+                    let t = s as f64 / 48.0;
+                    let p = from + d * t;
+                    if let Some((row, col)) = cell(p.x - center.x, p.y - center.y) {
+                        put(grid, row, col, '*', WHITE);
+                    }
+                }
+            }
+            Flash::Blast { pos, radius } => {
+                for row in 1..=ih {
+                    for col in 0..iw {
+                        let dx = (col as f64 - half_w) / half_w * range;
+                        let dy = -((row as f64 - 1.0 - half_h) / half_h) * range;
+                        let world = begin_core::math::Vec3::new(
+                            center.x + dx - pos.x,
+                            center.y + dy - pos.y,
+                            0.0,
+                        );
+                        if world.len() < radius {
+                            put(grid, r0 + row, BOX_X + 1 + col, '*', RED);
+                        }
+                    }
+                }
+                if let Some((row, col)) = cell(pos.x - center.x, pos.y - center.y) {
+                    put(grid, row, col, '*', YELLOW);
+                }
+            }
+        }
+    }
 }
 
 /// SYSTEMS STATUS panel (lower right).

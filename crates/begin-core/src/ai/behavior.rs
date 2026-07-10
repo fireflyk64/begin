@@ -366,7 +366,7 @@ fn fire_torpedoes_at_target(g: &mut Game, ctx: &mut Ctx) -> bool {
         })
     };
     if needs_lock {
-        orders::lock_tubes(g, ctx.id, &Mounts::All, t.id, lead);
+        orders::lock_tubes(g, ctx.id, &Mounts::All, t.id, lead, 0.0);
         {
             let b = &mut g.obj_mut(ctx.id).ship.as_mut().unwrap().brain;
             b.last_lead_offset = lead;

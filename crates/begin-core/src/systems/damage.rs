@@ -339,14 +339,21 @@ pub fn splash_starter(g: &mut Game) {
         if det != Det::Expire {
             splash_damage(g, id);
         }
-        if g.obj(id).kind == Kind::Ship {
-            let name = g.obj(id).name.clone();
-            let text = if det == Det::Detonate {
-                format!("The {name} has self destructed!")
-            } else {
-                format!("The {name} has been destroyed!")
-            };
-            g.say(None, "", text, ReportKind::Alert);
+        match g.obj(id).kind {
+            Kind::Ship => {
+                let name = g.obj(id).name.clone();
+                let text = if det == Det::Detonate {
+                    format!("The {name} has self destructed!")
+                } else {
+                    format!("The {name} has been destroyed!")
+                };
+                g.say(None, "", text, ReportKind::Alert);
+            }
+            Kind::Probe if det == Det::Detonate => {
+                let code = g.obj(id).probe.as_ref().unwrap().code.clone();
+                g.say(None, "", format!("Probe \"{code}\" detonating!"), ReportKind::Info);
+            }
+            _ => {}
         }
         g.remove(id);
     }
@@ -409,6 +416,7 @@ fn splash_damage(g: &mut Game, id: ObjId) {
 
     let total = yield_base * g.tuning.splash_dam_mult;
     let radius = total * SPLASH_RADIUS_PER_DAMAGE;
+    g.flash(crate::events::Flash::Blast { pos, radius });
     for other in g.ids() {
         if other == id {
             continue;

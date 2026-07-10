@@ -113,6 +113,7 @@ fn resolve_banks(g: &mut Game, id: ObjId) {
         };
         let facing = norm360(my_course + mark);
         let axis = dir(facing, my_mark);
+        g.flash(crate::events::Flash::Beam { from: my_pos, to: my_pos + axis * range });
         for other in g.ids() {
             if other == id {
                 continue;
@@ -177,6 +178,7 @@ fn resolve_rails(g: &mut Game, id: ObjId) {
         let mark = g.obj(id).ship.as_ref().unwrap().rails[k].mark;
         let facing = norm360(my_course + mark);
         let axis = dir(facing, my_mark);
+        g.flash(crate::events::Flash::Beam { from: my_pos, to: my_pos + axis * rd.range });
         for other in g.ids() {
             if other == id {
                 continue;

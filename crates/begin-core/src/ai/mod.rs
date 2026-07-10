@@ -203,7 +203,7 @@ fn housekeeping(g: &mut Game, ctx: &Ctx) {
     };
     if needs_tube_lock {
         let lead = g.obj(ctx.id).ship.as_ref().unwrap().brain.last_lead_offset;
-        orders::lock_tubes(g, ctx.id, &Mounts::All, tid, lead);
+        orders::lock_tubes(g, ctx.id, &Mounts::All, tid, lead, 0.0);
     }
     let needs_bank_lock = {
         let s = g.obj(ctx.id).ship.as_ref().unwrap();

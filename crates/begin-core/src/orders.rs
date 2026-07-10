@@ -121,32 +121,62 @@ pub fn fire_torpedoes(g: &mut Game, id: ObjId, which: &Mounts) -> usize {
     n
 }
 
-/// `lock tubes <list> on <ship>` with an optional AI lead offset
-/// (`sub_BCBA`/`sub_1F2C6`).
-pub fn lock_tubes(g: &mut Game, id: ObjId, which: &Mounts, target: ObjId, lead: f64) -> usize {
+/// Evenly-spaced fan offsets across `n` tubes covering `dispersion` degrees.
+fn fan_offset(j: usize, n: usize, dispersion: f64) -> f64 {
+    if n > 1 && dispersion.abs() > 1e-9 {
+        dispersion * (j as f64 / (n - 1) as f64 - 0.5)
+    } else {
+        0.0
+    }
+}
+
+/// `lock tubes <list> on <ship> [dispersion <deg>]` (`sub_BCBA`/`sub_1F2C6`).
+/// `lead` is the AI's off-axis lead order; `dispersion` fans the salvo so the
+/// tubes' solutions spread evenly across the given arc (begin2's third
+/// lock-tubes prompt) — dispersed torpedoes do not salvo-merge.
+pub fn lock_tubes(
+    g: &mut Game,
+    id: ObjId,
+    which: &Mounts,
+    target: ObjId,
+    lead: f64,
+    dispersion: f64,
+) -> usize {
     if target == id {
         return 0;
     }
     let s = g.obj_mut(id).ship.as_mut().unwrap();
-    let mut n = 0;
-    for (k, t) in s.tubes.iter_mut().enumerate() {
-        if which.contains(k) && !t.sys.destroyed() {
-            t.lock = Some(target);
-            t.lead_offset = lead;
-            n += 1;
-        }
+    let idx: Vec<usize> = s
+        .tubes
+        .iter()
+        .enumerate()
+        .filter(|(k, t)| which.contains(*k) && !t.sys.destroyed())
+        .map(|(k, _)| k)
+        .collect();
+    let n = idx.len();
+    for (j, &k) in idx.iter().enumerate() {
+        let t = &mut s.tubes[k];
+        t.lock = Some(target);
+        t.lead_offset = lead + fan_offset(j, n, dispersion);
     }
     n
 }
 
-/// `turn tubes <list> <mark>`: manual mark, drops the lock.
-pub fn turn_tubes(g: &mut Game, id: ObjId, which: &Mounts, mark: f64) {
+/// `turn tubes <list> <mark> [dispersion <deg>]`: manual mark, drops the lock.
+pub fn turn_tubes(g: &mut Game, id: ObjId, which: &Mounts, mark: f64, dispersion: f64) {
     let s = g.obj_mut(id).ship.as_mut().unwrap();
-    for (k, t) in s.tubes.iter_mut().enumerate() {
-        if which.contains(k) && !t.sys.destroyed() {
-            t.lock = None;
-            t.mark = norm360(mark);
-        }
+    let idx: Vec<usize> = s
+        .tubes
+        .iter()
+        .enumerate()
+        .filter(|(k, t)| which.contains(*k) && !t.sys.destroyed())
+        .map(|(k, _)| k)
+        .collect();
+    let n = idx.len();
+    for (j, &k) in idx.iter().enumerate() {
+        let t = &mut s.tubes[k];
+        t.lock = None;
+        t.mark = norm360(mark + fan_offset(j, n, dispersion));
     }
 }
 

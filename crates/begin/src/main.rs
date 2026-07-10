@@ -30,11 +30,13 @@ fn main() {
         .map(|d| d.as_secs())
         .unwrap_or(1);
     let mut quick = false;
+    let mut flash = true;
     let mut epoch = 0.0f64;
     let mut spawn_body: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "--no-flash" => flash = false,
             "--seed" => {
                 i += 1;
                 seed = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(seed);
@@ -73,7 +75,7 @@ fn main() {
             x => {
                 eprintln!("unknown option {x}");
                 eprintln!("usage: begin [host|join <code>] [--quick] [--seed N] [--planar-lock] [--begin1]");
-                eprintln!("             [--date YYYY-MM-DD] [--near Body:low|high|rings]");
+                eprintln!("             [--date YYYY-MM-DD] [--near Body:low|high|rings] [--no-flash]");
                 eprintln!("             [--server URL] [--code C] [--players N] [--coop|--versus]");
                 std::process::exit(2);
             }
@@ -84,6 +86,44 @@ fn main() {
     println!("{WHITE}BEGIN - A Tactical Starship Simulation{RESET}");
     println!("{GREY}Rust port of Begin 2.00 (c) 1984-1991 Clockwork Software{RESET}");
     println!();
+
+    // no subcommand given: offer multiplayer from the interactive menu
+    let mut mode = mode;
+    if mode.is_empty() && !quick {
+        let stdin = std::io::stdin();
+        let mut lines = stdin.lock().lines();
+        loop {
+            let Some(ans) = prompt(
+                "Game type?  single (Enter) / host [players] / join <code>",
+                &mut lines,
+            ) else {
+                return;
+            };
+            let w: Vec<&str> = ans.split_whitespace().collect();
+            match w.first().map(|s| s.to_ascii_lowercase()).as_deref() {
+                None | Some("s" | "single" | "1") => break,
+                Some("h" | "host") => {
+                    mode = "host".into();
+                    if let Some(n) = w.get(1).and_then(|s| s.parse().ok()) {
+                        players = n;
+                    }
+                    println!(
+                        "{GREY}Hosting for {players} players via {server} (use --server URL for a LAN lobby).{RESET}"
+                    );
+                    break;
+                }
+                Some("j" | "join") => match w.get(1) {
+                    Some(c) => {
+                        mode = "join".into();
+                        code = c.to_uppercase();
+                        break;
+                    }
+                    None => println!("{RED}join needs the room code:  join ABCD{RESET}"),
+                },
+                Some(_) => println!("{RED}single, host, or join <code>.{RESET}"),
+            }
+        }
+    }
 
     if mode == "join" {
         if code.is_empty() {
@@ -164,6 +204,7 @@ fn main() {
 
     let side = game.obj(me).nation;
     let mut disp = Display::default();
+    disp.flash = flash;
     disp.push_plain("");
     let mut chart = Vec::new();
     ui::chart_lines(&game, me, &mut chart);
@@ -172,14 +213,14 @@ fn main() {
     }
 
     let stdout = std::io::stdout();
+    let draw = |game: &Game, viewer: Option<begin_core::ObjId>, disp: &Display| {
+        let mut out = stdout.lock();
+        let frame = ui::render(game, viewer, disp, &name, &[]);
+        let _ = out.write_all(frame.as_bytes());
+        let _ = out.flush();
+    };
     loop {
-        // draw
-        {
-            let mut out = stdout.lock();
-            let frame = ui::render(&game, game.get(me).map(|_| me), &disp, &name);
-            let _ = out.write_all(frame.as_bytes());
-            let _ = out.flush();
-        }
+        draw(&game, game.get(me).map(|_| me), &disp);
         // read
         let Some(Ok(line)) = lines.next() else { break };
         let outcome = if game.get(me).is_some() && game.over.is_none() {
@@ -198,7 +239,9 @@ fn main() {
                         disp.push(ui::report_line(&r));
                     }
                 }
-                if game.get(me).is_some() {
+                let flashes = game.take_flashes();
+                let alive = game.get(me).is_some();
+                if alive {
                     let mut chart = Vec::new();
                     ui::chart_lines(&game, me, &mut chart);
                     disp.push_plain("");
@@ -210,9 +253,21 @@ fn main() {
                         format!("{RED}Your ship has been destroyed.{RESET}"),
                         30,
                     ));
-                    break;
                 }
-                if game.over.is_some() {
+                // brief weapon-flash frame between cycles
+                if disp.flash && !flashes.is_empty() && alive {
+                    let mut out = stdout.lock();
+                    let frame = ui::render(&game, Some(me), &disp, &name, &flashes);
+                    let _ = out.write_all(frame.as_bytes());
+                    let _ = out.flush();
+                    drop(out);
+                    std::thread::sleep(std::time::Duration::from_millis(140));
+                }
+                if !alive || game.over.is_some() {
+                    // show the final events (your destruction included) and
+                    // give the commander a moment before the evaluation
+                    draw(&game, game.get(me).map(|_| me), &disp);
+                    std::thread::sleep(std::time::Duration::from_secs(4));
                     break;
                 }
             }
@@ -223,7 +278,7 @@ fn main() {
     println!("\r\n");
     let (_tier, text) = game.evaluation(side);
     let nation = &game.data.nations[side];
-    println!("{WHITE}{}{RESET}", nation.command);
+    println!("{WHITE}{} \u{2014} {}{RESET}", nation.name, nation.command);
     println!("{GREEN}{text}{RESET}");
 }
 

@@ -78,7 +78,7 @@ fn torpedoes_fly_arm_and_detonate_on_prox() {
     }
     let loaded = g.obj(ally).ship.as_ref().unwrap().loaded_tubes();
     assert!(loaded > 0, "tubes loaded: {loaded}");
-    orders::lock_tubes(&mut g, ally, &Mounts::All, enemy, 0.0);
+    orders::lock_tubes(&mut g, ally, &Mounts::All, enemy, 0.0, 0.0);
     g.run_cycle();
     let enemy_shields_before: f64 = (0..6).map(|k| shield_pct(&g, enemy, k)).sum();
     orders::fire_torpedoes(&mut g, ally, &Mounts::All);
@@ -109,7 +109,7 @@ fn torpedo_lead_hits_a_crossing_target() {
     for _ in 0..6 {
         g.run_cycle();
     }
-    orders::lock_tubes(&mut g, ally, &Mounts::All, enemy, 0.0);
+    orders::lock_tubes(&mut g, ally, &Mounts::All, enemy, 0.0, 0.0);
     g.run_cycle();
     let crew_before = g.obj(enemy).ship.as_ref().unwrap().survivors;
     let shields_before: f64 = (0..6).map(|k| shield_pct(&g, enemy, k)).sum();
@@ -292,7 +292,7 @@ fn kinetic_rounds_contact_damage_no_splash() {
     for _ in 0..4 {
         g.run_cycle();
     }
-    orders::lock_tubes(&mut g, ally, &Mounts::All, enemy, 0.0);
+    orders::lock_tubes(&mut g, ally, &Mounts::All, enemy, 0.0, 0.0);
     g.run_cycle();
     let before: f64 = (0..6).map(|k| shield_pct(&g, enemy, k)).sum();
     orders::fire_torpedoes(&mut g, ally, &Mounts::All);
@@ -343,4 +343,51 @@ fn ai_duel_is_competitive_and_resolves() {
     assert!(fired_phaser || g.over.is_some(), "the AI used phasers or won outright");
     assert!(g.over.is_some(), "AI duel resolves within 3000 cycles (ran {cycles})");
     let _ = e;
+}
+
+#[test]
+fn tube_dispersion_fans_the_salvo() {
+    // lock with dispersion: solutions spread evenly, so the torps don't
+    // salvo-merge and their courses span ~the dispersion arc
+    let (mut g, ally, enemy) = close_duel(40, 8000.0);
+    orders::load_tubes(&mut g, ally, &Mounts::All, Some(500.0));
+    for _ in 0..6 {
+        g.run_cycle();
+    }
+    let n_tubes = g.obj(ally).ship.as_ref().unwrap().loaded_tubes();
+    assert!(n_tubes >= 2);
+    orders::lock_tubes(&mut g, ally, &Mounts::All, enemy, 0.0, 30.0);
+    g.run_cycle();
+    orders::fire_torpedoes(&mut g, ally, &Mounts::All);
+    g.run_cycle();
+    let torps = g.torp_ids();
+    assert_eq!(torps.len(), n_tubes, "dispersed torps must not salvo-merge");
+    let courses: Vec<f64> = torps.iter().map(|&t| g.obj(t).course).collect();
+    // widest pairwise angular separation (handles the 0/360 wrap)
+    let mut span = 0.0f64;
+    for &a in &courses {
+        for &b in &courses {
+            span = span.max(begin_core::math::ang_dist(a, b));
+        }
+    }
+    assert!(
+        span > 20.0 && span < 40.0,
+        "salvo fan spans ~30 degrees: {courses:?} (span {span})"
+    );
+}
+
+#[test]
+fn detonate_all_probes_blows_every_active_probe() {
+    let (mut g, ally, enemy) = close_duel(41, 9000.0);
+    let launchers = g.obj(ally).ship.as_ref().unwrap().launchers.len();
+    assert!(launchers >= 2);
+    orders::load_launchers(&mut g, ally, &Mounts::All, 0.0, 0.0);
+    orders::fire_probes(&mut g, ally, &Mounts::All, Some(enemy), None);
+    g.run_cycle();
+    let live = g.probe_ids().len();
+    assert_eq!(live, launchers, "all probes in flight");
+    let n = begin_core::systems::probes::detonate_all(&mut g, ally);
+    assert_eq!(n, live);
+    g.run_cycle();
+    assert!(g.probe_ids().is_empty(), "all probes detonated");
 }

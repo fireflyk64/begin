@@ -9,7 +9,9 @@ All ship, torpedo, probe and nation data is extracted from the original
 binary (`tools/extract_stats.py` → `crates/begin-core/data/*.json`),
 including the endgame messages, officer rosters and Daniel's binary patches
 (`ooDestructDamage` 14.0; the optional "begin1 feel" phaser/splash profile
-via `--begin1`).
+via `--begin1`). Weapon mount counts come from **begin 1.65** (`begin.exe`)
+— begin 2.00 halved most loadouts, but the classic K'tinga battle cruiser
+carries 5 banks and 5 tubes, and that's what you get.
 
 ## Playing
 
@@ -23,12 +25,17 @@ Setup: `ally 2 heavy cruisers flagship`, `enemy 3 frigates`, then `begin`
 
 In play, the full v1.65 + v2.0 command set works — `help` lists it:
 `helm course 135 warp 6` (or just `135 6`), `pursue kronos 8`,
-`lock all banks on kronos`, `fire all phasers spread 10`,
-`load tubes prox 500`, `fire torpedoes 1 2`, `fire probes at kronos`,
+`lock all banks on kronos`, `fire all banks 45` / `fire phasers 1 2 spread 10`,
+`lock tubes on kronos dispersion 20` (fans the salvo), `load tubes prox 500`,
+`fire torpedoes 1 2`, `load launchers prox 800 time 30`,
+`fire probes at kronos` (each probe reports its control code),
+`status probes`, `detonate probe <code>` / `detonate all probes`,
 `raise shields`, `reenforce 1`, `status tubes`, `scan kronos`, `damage`,
 `transport 50 exeter`, `tractor cobra`, `dock alpha`, `cloak on`
-(Romulans), `destruct`, `tell asp attack kronos`, `tell group 1 standoff`,
-`computer ship klingon frigate`, `quit`. An empty line lets a cycle pass.
+(Romulans), `destruct` (a broadcast countdown), `tell asp attack kronos`,
+`tell group 1 standoff`, `computer ship klingon frigate`, `quit`.
+An empty line lets a cycle pass. Phaser fire and detonations flash briefly
+on the scope (`flash off` or `--no-flash` disables).
 
 ### The port's additions
 
@@ -50,7 +57,9 @@ In play, the full v1.65 + v2.0 command set works — `help` lists it:
 ## Multiplayer (peer-to-peer via lobbylink)
 
 No game server — the host's process owns the simulation and every other
-player is a dumb terminal seeing the text the host renders for them:
+player is a dumb terminal seeing the text the host renders for them.
+Starting `begin` with no arguments asks `single / host / join <code>`;
+the equivalent CLI forms:
 
 ```
 begin host --players 2            # prints a room code; add --coop for same-side play

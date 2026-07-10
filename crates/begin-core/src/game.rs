@@ -117,6 +117,15 @@ impl Game {
     pub fn say(&mut self, side: Option<usize>, speaker: &str, text: String, kind: ReportKind) {
         self.reporter.say(side, speaker, text, kind, self.cycle);
     }
+    /// Record a cosmetic scope flash (front-ends may render it briefly).
+    pub fn flash(&mut self, f: crate::events::Flash) {
+        if self.reporter.flashes.len() < 256 {
+            self.reporter.flashes.push(f);
+        }
+    }
+    pub fn take_flashes(&mut self) -> Vec<crate::events::Flash> {
+        self.reporter.take_flashes()
+    }
     /// A line from one of the side's bridge officers (Sulu, Worf, ...).
     pub fn officer_say(&mut self, side: usize, text: String, kind: ReportKind) {
         let officers = &self.data.nations[side].officers;
