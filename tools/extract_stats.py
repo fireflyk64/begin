@@ -14,6 +14,14 @@ Validated against the v1.65 manual examples and AI_AND_COMBAT.md:
 - tube charge time 3 cycles for mk7 (manual systems-status legend)
 - distance-band table 3.0/1.9/1.75/... at ds:0xA65C (spec §12.4)
 
+If begin.exe (v1.65) sits next to begin2.exe, the v1.65 weapon mount counts
+(banks/tubes/launchers) override the begin2 ones — begin 2.00 halved most
+loadouts (Klingon BC 5 banks/5 tubes -> 3/2) and the 1.65 counts are the
+classic feel (the begin2 manual itself still describes the 5-bank Klingon
+Frigate). v1.65 records: stride 0x166, located via the far pointer to the
+class-name string; banks +0x64, tubes +0x86, launchers +0xA4, nation
+name via *(rec+8).
+
 Usage: python3 tools/extract_stats.py <begin2.exe> <output-dir>
 """
 import struct, json, sys, os
@@ -210,6 +218,63 @@ for k in range(PROBE_N):
         'homing': rw(b + 0x34) != 0,
         'scan_range': rd(b + 0x36),      # 20000 for data probes
     })
+
+# ---------- begin 1.65 mount counts (stats165) ----------
+def stats165_overrides(path):
+    d = open(path, 'rb').read()
+    base165 = struct.unpack_from('<H', d, 8)[0] * 16
+    def rw1(off):  return struct.unpack_from('<H', d, off)[0]
+    def fp1(off):
+        o, s = struct.unpack_from('<HH', d, off)
+        if o == 0 and s == 0: return None
+        return base165 + s * 16 + o
+    def cs1(off, maxlen=60):
+        if off is None or off >= len(d): return None
+        e = d.find(b'\0', off, off + maxlen)
+        if e < 0: return None
+        try: return d[off:e].decode('ascii')
+        except UnicodeDecodeError: return None
+    # anchor: the far pointer to the "Heavy Cruiser" class-name string
+    hc = d.find(b'Heavy Cruiser\0HC\0')
+    assert hc >= 0, 'begin.exe: no Heavy Cruiser string'
+    rec = None
+    for i in range(0, len(d) - 4):
+        o, s = struct.unpack_from('<HH', d, i)
+        if s > 0x100 and base165 + s * 16 + o == hc:
+            rec = i
+            break
+    assert rec is not None, 'begin.exe: no record pointing at Heavy Cruiser'
+    STRIDE = 0x166
+    recs = []
+    b = rec
+    while (n := cs1(fp1(b))) and n[0].isupper():
+        recs.append(b); b -= STRIDE
+    recs.reverse()
+    b = rec + STRIDE
+    while (n := cs1(fp1(b))) and n[0].isupper():
+        recs.append(b); b += STRIDE
+    out = {}
+    for b in recs:
+        nation = cs1(fp1(fp1(b + 8)))
+        out[(nation, cs1(fp1(b)))] = {
+            'banks': rw1(b + 0x64), 'tubes': rw1(b + 0x86), 'launchers': rw1(b + 0xA4),
+        }
+    return out
+
+exe165 = os.path.join(os.path.dirname(exe) or '.', 'begin.exe')
+if os.path.exists(exe165):
+    by_name = {n['adjective']: n['name'] for n in nations}
+    over = stats165_overrides(exe165)
+    for s in ships:
+        key = (by_name.get(s['nation']), s['name'])
+        if key in over:
+            o = over[key]
+            if (s['banks'], s['tubes'], s['launchers']) != (o['banks'], o['tubes'], o['launchers']):
+                print(f"stats165: {key[0]} {key[1]}: banks {s['banks']}->{o['banks']} "
+                      f"tubes {s['tubes']}->{o['tubes']} launchers {s['launchers']}->{o['launchers']}")
+            s.update(o)
+else:
+    print('begin.exe (v1.65) not found; keeping begin2 mount counts')
 
 # ---------- AI message tables (spec §12.10) ----------
 messages = {
