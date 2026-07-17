@@ -25,8 +25,8 @@ fn watch_ai_duel() {
             for id in g.ship_ids() {
                 let o = g.obj(id);
                 let s = o.ship.as_ref().unwrap();
-                println!("  c{cycles} {} w{:.1} crs{:.0} crew {} torps {} shields {:.0}",
-                    o.name, o.warp, o.course, s.survivors, s.torps_left,
+                println!("  c{cycles} {} w{:.1} crs{:.0} crew {} tubes {} shields {:.0}",
+                    o.name, o.warp, o.course, s.survivors, s.loaded_tubes(),
                     s.shields.iter().map(|x| x.effective).sum::<f64>());
             }
         }

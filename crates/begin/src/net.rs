@@ -57,6 +57,32 @@ struct Seat {
     connected: bool,
     name: String,
     queue: std::collections::VecDeque<String>,
+    /// A prompt for a forgotten argument: (question, prefix, default).
+    pending: Option<(String, String, String)>,
+}
+
+/// The prompt to show: a pending question, else the player name.
+fn prompt_of<'a>(pending: &'a Option<(String, String, String)>, name: &'a str) -> &'a str {
+    pending.as_ref().map(|(q, _, _)| q.as_str()).unwrap_or(name)
+}
+
+/// Fold an answer line into a pending prompt; None = cancelled.
+fn resolve_pending(
+    pending: &mut Option<(String, String, String)>,
+    line: &str,
+) -> Option<String> {
+    match pending.take() {
+        Some((_, prefix, default)) => {
+            let ans = line.trim();
+            let ans = if ans.is_empty() { default } else { ans.to_string() };
+            if ans.is_empty() {
+                None
+            } else {
+                Some(format!("{prefix} {ans}"))
+            }
+        }
+        None => Some(line.trim().to_string()),
+    }
 }
 
 /// Host: create the room, wait for everyone, run the simulation.
@@ -138,6 +164,7 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
                 connected: true,
                 name: pname,
                 queue: std::collections::VecDeque::new(),
+                pending: None,
             },
         );
     }
@@ -171,6 +198,7 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
     });
     let mut my_submitted = false;
     let mut my_queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+    let mut my_pending: Option<(String, String, String)> = None;
     let mut quit = false;
 
     'outer: loop {
@@ -221,13 +249,27 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
             // host lines
             while !my_submitted {
                 let Some(line) = my_queue.pop_front() else { break };
+                let Some(input) = resolve_pending(&mut my_pending, &line) else {
+                    my_disp.push(ui::Line::plain("(cancelled)"));
+                    draw_local(&game, my_ship, &my_disp, &cfg.name);
+                    continue;
+                };
                 match my_ship.filter(|&s| game.get(s).is_some()) {
-                    Some(s) => match commands::execute(&mut game, s, &mut my_disp, line.trim()) {
+                    Some(s) => match commands::execute(&mut game, s, &mut my_disp, &input) {
                         Outcome::Quit => {
                             quit = true;
                             break 'outer;
                         }
                         Outcome::Stay => draw_local(&game, my_ship, &my_disp, &cfg.name),
+                        Outcome::Ask { question, prefix, default } => {
+                            my_pending = Some((question, prefix, default));
+                            draw_local(
+                                &game,
+                                my_ship,
+                                &my_disp,
+                                prompt_of(&my_pending, &cfg.name),
+                            );
+                        }
                         Outcome::Advance => {
                             my_submitted = true;
                             draw_local(&game, my_ship, &my_disp, &cfg.name);
@@ -245,8 +287,14 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
                 let seat = seats.get_mut(&pid).unwrap();
                 while !seat.submitted {
                     let Some(line) = seat.queue.pop_front() else { break };
+                    let Some(input) = resolve_pending(&mut seat.pending, &line) else {
+                        seat.disp.push(ui::Line::plain("(cancelled)"));
+                        let f = render_for(&game, seat);
+                        let _ = lobby.send_reliable(pid, msg("frame", "data", &f)).await;
+                        continue;
+                    };
                     match seat.ship.filter(|&s| game.get(s).is_some()) {
-                        Some(s) => match commands::execute(&mut game, s, &mut seat.disp, line.trim()) {
+                        Some(s) => match commands::execute(&mut game, s, &mut seat.disp, &input) {
                             Outcome::Quit => {
                                 if let Some(o) = game.get_mut(s) {
                                     o.control = Control::Ai;
@@ -254,6 +302,11 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
                                 seat.ship = None;
                             }
                             Outcome::Stay => {
+                                let f = render_for(&game, seat);
+                                let _ = lobby.send_reliable(pid, msg("frame", "data", &f)).await;
+                            }
+                            Outcome::Ask { question, prefix, default } => {
+                                seat.pending = Some((question, prefix, default));
                                 let f = render_for(&game, seat);
                                 let _ = lobby.send_reliable(pid, msg("frame", "data", &f)).await;
                             }
@@ -292,7 +345,10 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
                     }
                     push_chart(&game, Some(s), &mut seat.disp);
                 } else if seat.ship.is_some() {
-                    seat.disp.push(ui::Line::new(format!("{RED}Your ship has been destroyed.{RESET}"), 30));
+                    seat.disp.push(ui::Line::new(
+                        format!("{}Your ship has been destroyed.{RESET}", ui::RBLINK),
+                        30,
+                    ));
                     seat.ship = None;
                 }
             }
@@ -327,17 +383,37 @@ pub async fn run_host(cfg: HostConfig) -> Result<(), Box<dyn std::error::Error>>
                     tokio::time::sleep(std::time::Duration::from_millis(140)).await;
                 }
             }
+            // when the game just ended, keep the blast asterisks flashing on
+            // the final frame everyone stares at before the evaluations land
+            let ending = game.over.is_some() || !my_alive;
             for (pid, seat) in seats.iter() {
                 if seat.connected {
-                    let f = render_for(&game, seat);
+                    let f = if ending && seat.disp.flash && !flashes.is_empty() {
+                        render_for_flash(&game, seat, &flashes)
+                    } else {
+                        render_for(&game, seat)
+                    };
                     let _ = lobby.send_reliable(*pid, msg("frame", "data", &f)).await;
                 }
             }
-            draw_local(&game, my_ship.filter(|&s| game.get(s).is_some()), &my_disp, &cfg.name);
-            if game.over.is_some() || !my_alive {
+            let final_fx: &[begin_core::events::Flash] =
+                if ending && my_disp.flash { &flashes } else { &[] };
+            let frame = ui::render(
+                &game,
+                my_ship.filter(|&s| game.get(s).is_some()),
+                &my_disp,
+                &cfg.name,
+                final_fx,
+            );
+            {
+                let mut out = std::io::stdout().lock();
+                let _ = out.write_all(frame.as_bytes());
+                let _ = out.flush();
+            }
+            if ending {
                 // leave the final frame up for a few seconds before the
                 // evaluations land
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                 break 'outer;
             }
         }
@@ -379,7 +455,13 @@ fn push_chart(game: &Game, ship: Option<ObjId>, disp: &mut Display) {
 }
 
 fn render_for(game: &Game, seat: &Seat) -> String {
-    ui::render(game, seat.ship.filter(|&s| game.get(s).is_some()), &seat.disp, &seat.name, &[])
+    ui::render(
+        game,
+        seat.ship.filter(|&s| game.get(s).is_some()),
+        &seat.disp,
+        prompt_of(&seat.pending, &seat.name),
+        &[],
+    )
 }
 
 fn render_for_flash(game: &Game, seat: &Seat, flashes: &[begin_core::events::Flash]) -> String {

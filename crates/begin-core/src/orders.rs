@@ -204,7 +204,6 @@ pub fn unload_tubes(g: &mut Game, id: ObjId, which: &Mounts) {
     for (k, t) in s.tubes.iter_mut().enumerate() {
         if which.contains(k) && t.loaded.take().is_some() {
             t.charge = 0.0;
-            s.torps_left += 1;
         }
     }
 }
@@ -249,8 +248,8 @@ pub fn load_launchers(g: &mut Game, id: ObjId, which: &Mounts, prox: f64, time: 
 pub fn unload_launchers(g: &mut Game, id: ObjId, which: &Mounts) {
     let s = g.obj_mut(id).ship.as_mut().unwrap();
     for (k, l) in s.launchers.iter_mut().enumerate() {
-        if which.contains(k) && l.loaded.take().is_some() {
-            s.probes_left += 1;
+        if which.contains(k) {
+            l.loaded = None;
         }
     }
 }

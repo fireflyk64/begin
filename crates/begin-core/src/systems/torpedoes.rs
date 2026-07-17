@@ -43,9 +43,6 @@ fn charge_and_load(g: &mut Game, id: ObjId) {
         if tube.loaded.is_some() {
             continue;
         }
-        if s.torps_left <= 0 {
-            continue;
-        }
         // charge toward 100%
         let step_pct = 100.0 / td.charge_time.max(0.01);
         let cost = td.damage / td.charge_time.max(0.01);
@@ -69,7 +66,6 @@ fn charge_and_load(g: &mut Game, id: ObjId) {
                 salvo: 1,
                 design: torp_idx,
             });
-            s.torps_left -= 1;
         }
     }
     o.pool = pool;
@@ -317,7 +313,7 @@ pub fn fuse_step(g: &mut Game) {
             None,
             "",
             format!("The {name} will self destruct in {k} cycle{plural}!"),
-            crate::events::ReportKind::Alert,
+            crate::events::ReportKind::Blink,
         );
     }
 }

@@ -23,6 +23,27 @@ pub const BROWN: &str = "\x1b[33m";
 pub const WHITE: &str = "\x1b[97m";
 pub const GREY: &str = "\x1b[37m";
 pub const DIM: &str = "\x1b[90m";
+// blinking variants (begin2 flashes damage X's, torpedoes, destruct drama)
+pub const RBLINK: &str = "\x1b[91;5m";
+pub const YBLINK: &str = "\x1b[93;5m";
+
+/// Printable width of a string containing ANSI escape sequences.
+pub fn printable_width(s: &str) -> usize {
+    let mut w = 0;
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for n in chars.by_ref() {
+                if n.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            w += 1;
+        }
+    }
+    w
+}
 
 /// A left-region line with embedded ANSI plus its printable length.
 #[derive(Clone)]
@@ -38,6 +59,64 @@ impl Line {
     pub fn plain(s: &str) -> Line {
         Line { text: s.to_string(), width: s.chars().count() }
     }
+}
+
+/// Word-wrap a line with embedded ANSI at `max` printable columns, carrying
+/// the active SGR state onto continuation lines (indented two spaces) so
+/// long crew reports never spill into the right-hand panels.
+fn wrap_ansi(text: &str, max: usize) -> Vec<Line> {
+    let mut out: Vec<Line> = Vec::new();
+    let mut cur = String::new();
+    let mut w = 0usize;
+    let mut state = String::new(); // active SGR sequences since last reset
+    // last breakable space: (byte pos in cur, printable width there, state)
+    let mut brk: Option<(usize, usize, String)> = None;
+    let mut chars = text.chars().peekable();
+    loop {
+        let Some(c) = chars.next() else { break };
+        if c == '\x1b' {
+            let mut seq = String::new();
+            seq.push(c);
+            while let Some(&n) = chars.peek() {
+                seq.push(n);
+                chars.next();
+                if n.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            if seq == RESET {
+                state.clear();
+            } else {
+                state.push_str(&seq);
+            }
+            cur.push_str(&seq);
+            continue;
+        }
+        if w >= max {
+            // split: prefer the last space seen on this segment
+            let (head, head_w, carry_state, tail) = match brk.take() {
+                Some((pos, bw, st)) => {
+                    let tail = cur[pos + 1..].to_string();
+                    cur.truncate(pos);
+                    (std::mem::take(&mut cur), bw, st, tail)
+                }
+                None => (std::mem::take(&mut cur), w, state.clone(), String::new()),
+            };
+            out.push(Line { text: format!("{head}{RESET}"), width: head_w });
+            let tail_w = printable_width(&tail);
+            cur = format!("{carry_state}  {tail}");
+            w = 2 + tail_w;
+        }
+        if c == ' ' {
+            brk = Some((cur.len(), w, state.clone()));
+        }
+        cur.push(c);
+        w += 1;
+    }
+    if !cur.is_empty() || out.is_empty() {
+        out.push(Line { text: cur, width: w });
+    }
+    out
 }
 
 /// Per-viewer display state: the scroll buffer and scanner magnification.
@@ -56,7 +135,11 @@ impl Default for Display {
 
 impl Display {
     pub fn push(&mut self, l: Line) {
-        self.scroll.push(l);
+        // measure from the text itself (callers' widths are approximate) and
+        // wrap so nothing bleeds into the right-hand panels
+        for seg in wrap_ansi(&l.text, LEFT_W) {
+            self.scroll.push(seg);
+        }
         if self.scroll.len() > 400 {
             self.scroll.drain(0..100);
         }
@@ -195,11 +278,13 @@ pub fn render(
         } else {
             out.push_str(&" ".repeat(LEFT_W));
         }
-        // right region from the grid
+        // right region from the grid (reset between color changes so a
+        // blinking cell doesn't leak the blink attribute into neighbours)
         let mut cur: &str = "";
         for col in BOX_X..SCREEN_W {
             let (ch, color) = grid[row][col];
             if color != cur {
+                out.push_str(RESET);
                 out.push_str(color);
                 cur = color;
             }
@@ -290,8 +375,8 @@ fn draw_scope(g: &Game, viewer: ObjId, disp: &Display, grid: &mut [Vec<(char, &'
                 put_str(grid, row, col.min(SCREEN_W - 2), &tag, color);
             }
             Kind::Torp => {
-                // begin2 draws torpedoes as a two-dot streak
-                let color = if hostile { RED } else { YELLOW };
+                // begin2 draws torpedoes as a flashing two-dot streak
+                let color = if hostile { RBLINK } else { YBLINK };
                 put(grid, row, col, '\u{b7}', color);
                 put(grid, row, (col + 1).min(BOX_X + iw), '\u{b7}', color);
             }
@@ -372,12 +457,12 @@ fn draw_flashes(
                             0.0,
                         );
                         if world.len() < radius {
-                            put(grid, r0 + row, BOX_X + 1 + col, '*', RED);
+                            put(grid, r0 + row, BOX_X + 1 + col, '*', RBLINK);
                         }
                     }
                 }
                 if let Some((row, col)) = cell(pos.x - center.x, pos.y - center.y) {
-                    put(grid, row, col, '*', YELLOW);
+                    put(grid, row, col, '*', YBLINK);
                 }
             }
         }
@@ -498,12 +583,19 @@ fn draw_status_panel(g: &Game, viewer: ObjId, grid: &mut [Vec<(char, &'static st
     let mut row = r0 + 2;
     for (label, value, color) in rows {
         put_str(grid, row, BOX_X + 3, label, GREEN);
-        put_str(grid, row, BOX_X + 15, &value, color);
+        put_row(grid, row, BOX_X + 15, &value, color);
         row += 1;
     }
     if !s.rails.is_empty() {
         put_str(grid, row, BOX_X + 3, "Drives:", GREEN);
-        put_str(grid, row, BOX_X + 15, &drives, GREY);
+        put_row(grid, row, BOX_X + 15, &drives, GREY);
+    }
+}
+
+/// Systems-status row values: destroyed mounts ('x') flash red.
+fn put_row(grid: &mut [Vec<(char, &'static str)>], row: usize, col: usize, s: &str, color: &'static str) {
+    for (i, ch) in s.chars().enumerate() {
+        put(grid, row, col + i, ch, if ch == 'x' { RBLINK } else { color });
     }
 }
 
@@ -515,6 +607,7 @@ pub fn report_line(r: &begin_core::events::Report) -> Line {
         ReportKind::Ally => BGREEN,
         ReportKind::Alert => RED,
         ReportKind::Info => GREY,
+        ReportKind::Blink => RBLINK,
     };
     if r.speaker.is_empty() {
         Line::new(format!("{color}{}{RESET}", r.text), r.text.chars().count())

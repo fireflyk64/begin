@@ -23,9 +23,6 @@ pub fn load_launcher(g: &mut Game, id: ObjId, launcher: usize, prox: f64, time: 
         format!("{a}{b}{}", 100 + (g.cycle as usize + launcher * 7) % 900)
     };
     let s = g.obj_mut(id).ship.as_mut().unwrap();
-    if s.probes_left <= 0 {
-        return false;
-    }
     let l = &mut s.launchers[launcher];
     if l.sys.destroyed() || l.loaded.is_some() {
         return false;
@@ -42,7 +39,6 @@ pub fn load_launcher(g: &mut Game, id: ObjId, launcher: usize, prox: f64, time: 
         deliberate_target: None,
     });
     l.code = code;
-    s.probes_left -= 1;
     true
 }
 

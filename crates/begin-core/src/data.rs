@@ -199,14 +199,35 @@ impl GameData {
     }
 
     pub fn nation(&self, adjective: &str) -> Option<&Nation> {
-        self.nations
-            .iter()
-            .find(|n| n.adjective.eq_ignore_ascii_case(adjective) || n.name.eq_ignore_ascii_case(adjective))
+        self.nation_idx(adjective).map(|i| &self.nations[i])
     }
+    /// Exact match on adjective or name, else a unique case-insensitive
+    /// prefix of either ("kli" → Klingon).
     pub fn nation_idx(&self, adjective: &str) -> Option<usize> {
-        self.nations
+        let q = adjective.to_ascii_lowercase();
+        if let Some(i) = self.nations.iter().position(|n| {
+            n.adjective.eq_ignore_ascii_case(&q) || n.name.eq_ignore_ascii_case(&q)
+        }) {
+            return Some(i);
+        }
+        if q.is_empty() {
+            return None;
+        }
+        let hits: Vec<usize> = self
+            .nations
             .iter()
-            .position(|n| n.adjective.eq_ignore_ascii_case(adjective) || n.name.eq_ignore_ascii_case(adjective))
+            .enumerate()
+            .filter(|(_, n)| {
+                n.adjective.to_ascii_lowercase().starts_with(&q)
+                    || n.name.to_ascii_lowercase().starts_with(&q)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        if hits.len() == 1 {
+            Some(hits[0])
+        } else {
+            None
+        }
     }
     /// Ship classes belonging to a nation.
     pub fn classes_of(&self, nation_adj: &str) -> Vec<&ShipDesign> {

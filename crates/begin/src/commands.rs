@@ -4,7 +4,7 @@
 //! Commands only set flags/orders; the cycle resolves them. Status commands
 //! do not end the turn (manual §IV STATUS).
 
-use crate::ui::{self, Display, Line, CYAN, GREEN, GREY, RED, RESET, WHITE};
+use crate::ui::{self, Display, Line, CYAN, GREEN, GREY, RBLINK, RED, RESET, WHITE, YBLINK};
 use begin_core::ai::Mission;
 use begin_core::object::{Control, HelmMode, ObjId, ShieldState};
 use begin_core::orders::{self, Mounts};
@@ -15,7 +15,32 @@ pub enum Outcome {
     Advance,
     /// Status/display only: prompt again.
     Stay,
+    /// A required argument is missing: show `question` as the prompt and
+    /// re-execute `prefix + " " + answer` (empty answer → `default`;
+    /// empty default → the command is cancelled).
+    Ask { question: String, prefix: String, default: String },
     Quit,
+}
+
+/// Parser failure: an error line, or (ask = Some) an explicit prompt for a
+/// forgotten argument with the default used on an empty answer.
+pub struct CmdErr {
+    msg: String,
+    ask: Option<String>,
+}
+
+impl From<String> for CmdErr {
+    fn from(msg: String) -> Self {
+        CmdErr { msg, ask: None }
+    }
+}
+impl From<&str> for CmdErr {
+    fn from(m: &str) -> Self {
+        CmdErr { msg: m.to_string(), ask: None }
+    }
+}
+fn ask(question: impl Into<String>, default: &str) -> CmdErr {
+    CmdErr { msg: question.into(), ask: Some(default.to_string()) }
 }
 
 pub fn execute(g: &mut Game, me: ObjId, disp: &mut Display, input: &str) -> Outcome {
@@ -29,12 +54,124 @@ pub fn execute(g: &mut Game, me: ObjId, disp: &mut Display, input: &str) -> Outc
     let mut p = Parser { g, me, disp, w: &words, i: 0 };
     match p.run() {
         Ok(out) => out,
-        Err(msg) => {
-            p.disp.push(Line::new(format!("{RED}{msg}{RESET}"), msg.chars().count()));
+        Err(e) => {
+            // a question raised with the command line exhausted means a
+            // forgotten argument: prompt for it (begin2 prompts each field)
+            if e.ask.is_some() || (e.msg.contains('?') && p.peek().is_none()) {
+                return Outcome::Ask {
+                    question: e.msg,
+                    prefix: input.trim().to_string(),
+                    default: e.ask.unwrap_or_default(),
+                };
+            }
+            p.disp.push(Line::new(format!("{RED}{}{RESET}", e.msg), e.msg.chars().count()));
             Outcome::Stay
         }
     }
 }
+
+/// Command vocabulary as (word, canonical) pairs; unique prefixes complete
+/// ("tor" → torpedo, "des" → destruct).
+const VERBS: &[(&str, &str)] = &[
+    ("helm", "helm"),
+    ("h", "helm"),
+    ("pursue", "pursue"),
+    ("elude", "elude"),
+    ("warp", "warp"),
+    ("speed", "warp"),
+    ("chart", "chart"),
+    ("report", "report"),
+    ("damage", "damage"),
+    ("scan", "scan"),
+    ("range", "range"),
+    ("display", "display"),
+    ("fire", "fire"),
+    ("phaser", "phaser"),
+    ("phasers", "phaser"),
+    ("torp", "torp"),
+    ("torps", "torp"),
+    ("torpedo", "torp"),
+    ("torpedoes", "torp"),
+    ("torpedos", "torp"),
+    ("probe", "probe"),
+    ("probes", "probe"),
+    ("rail", "rail"),
+    ("rails", "rail"),
+    ("railgun", "rail"),
+    ("railguns", "rail"),
+    ("lock", "lock"),
+    ("turn", "turn"),
+    ("load", "load"),
+    ("unload", "unload"),
+    ("enable", "enable"),
+    ("disable", "disable"),
+    ("raise", "raise"),
+    ("lower", "lower"),
+    ("reenforce", "reenforce"),
+    ("reinforce", "reenforce"),
+    ("status", "status"),
+    ("banks", "banks"),
+    ("tubes", "tubes"),
+    ("launchers", "launchers"),
+    ("shields", "shields"),
+    ("fleet", "fleet"),
+    ("computer", "computer"),
+    ("library", "computer"),
+    ("help", "help"),
+    ("?", "help"),
+    ("transport", "transport"),
+    ("beam", "transport"),
+    ("destruct", "destruct"),
+    ("abort", "abort"),
+    ("detonate", "detonate"),
+    ("repair", "repair"),
+    ("tractor", "tractor"),
+    ("board", "board"),
+    ("dock", "dock"),
+    ("undock", "undock"),
+    ("cloak", "cloak"),
+    ("tell", "tell"),
+    ("order", "tell"),
+    ("launch", "launch"),
+    ("recover", "recover"),
+    ("flash", "flash"),
+    ("flashes", "flash"),
+    ("planarlock", "planarlock"),
+    ("pass", "pass"),
+    ("wait", "pass"),
+    ("quit", "quit"),
+    ("exit", "quit"),
+];
+
+/// Resolve a typed verb: exact word, else unique prefix. Ambiguous prefixes
+/// report the candidates; unmatched tokens pass through (helm shorthand).
+fn resolve_verb(t: &str) -> Result<&str, CmdErr> {
+    if let Some((_, canon)) = VERBS.iter().find(|(w, _)| *w == t) {
+        return Ok(canon);
+    }
+    let mut hits: Vec<&str> = VERBS
+        .iter()
+        .filter(|(w, _)| w.starts_with(t))
+        .map(|(_, c)| *c)
+        .collect();
+    hits.sort_unstable();
+    hits.dedup();
+    match hits.len() {
+        0 => Ok(t),
+        1 => Ok(hits[0]),
+        _ => Err(format!("Ambiguous command '{t}': {}.", hits.join(", ")).into()),
+    }
+}
+
+/// Weapon-noun vocabularies for `noun()` (canonical, aliases).
+type NounGroup = (&'static str, &'static [&'static str]);
+const BANKS: NounGroup = ("banks", &["bank", "banks", "phaser", "phasers"]);
+const TUBES: NounGroup =
+    ("tubes", &["tube", "tubes", "torp", "torps", "torpedo", "torpedoes", "torpedos"]);
+const LAUNCHERS: NounGroup = ("launchers", &["launcher", "launchers", "probe", "probes"]);
+const PROBES: NounGroup = ("probes", &["probe", "probes"]);
+const RAILS: NounGroup = ("rails", &["rail", "rails", "railgun", "railguns"]);
+const SHIELDS: NounGroup = ("shields", &["shield", "shields"]);
 
 struct Parser<'a> {
     g: &'a mut Game,
@@ -44,7 +181,7 @@ struct Parser<'a> {
     i: usize,
 }
 
-type R = Result<Outcome, String>;
+type R = Result<Outcome, CmdErr>;
 
 impl<'a> Parser<'a> {
     fn peek(&self) -> Option<&'a str> {
@@ -90,12 +227,59 @@ impl<'a> Parser<'a> {
             Mounts::List(list)
         }
     }
-    fn ship(&mut self) -> Result<ObjId, String> {
+    /// Like `mounts`, but numbers >= 10 are left for later parameters
+    /// (proximity/time fuses) — no ship mounts that many of one weapon.
+    fn mounts_bounded(&mut self) -> Mounts {
+        if self.peek() == Some("all") {
+            self.i += 1;
+            return Mounts::All;
+        }
+        let mut list = Vec::new();
+        while let Some(t) = self.peek() {
+            match t.parse::<usize>() {
+                Ok(n) if n < 10 => {
+                    list.push(n);
+                    self.i += 1;
+                }
+                _ => break,
+            }
+        }
+        if list.is_empty() {
+            Mounts::All
+        } else {
+            Mounts::List(list)
+        }
+    }
+    /// Match the next token against noun groups by exact word, else unique
+    /// prefix across the groups; consumes the token on a match.
+    fn noun(&mut self, groups: &[NounGroup]) -> Option<&'static str> {
+        let t = self.peek()?;
+        for (canon, aliases) in groups {
+            if aliases.contains(&t) {
+                self.i += 1;
+                return Some(canon);
+            }
+        }
+        let mut hit: Option<&'static str> = None;
+        for (canon, aliases) in groups {
+            if aliases.iter().any(|a| a.starts_with(t)) {
+                if hit.is_some_and(|h| h != *canon) {
+                    return None; // ambiguous
+                }
+                hit = Some(canon);
+            }
+        }
+        if hit.is_some() {
+            self.i += 1;
+        }
+        hit
+    }
+    fn ship(&mut self) -> Result<ObjId, CmdErr> {
         self.skip_noise();
         let name = self.next().ok_or("Which ship?")?;
         self.g
             .find_by_name(name)
-            .ok_or_else(|| format!("No ship named '{name}'."))
+            .ok_or_else(|| format!("No ship named '{name}'.").into())
     }
     /// course token, possibly "320^22"
     fn course_mark(&mut self) -> Option<(f64, Option<f64>)> {
@@ -129,12 +313,12 @@ impl<'a> Parser<'a> {
     }
 
     fn run(&mut self) -> R {
-        let cmd = self.next().unwrap();
+        let cmd = resolve_verb(self.next().unwrap())?;
         match cmd {
-            "helm" | "h" => self.cmd_helm(),
+            "helm" => self.cmd_helm(),
             "pursue" => self.cmd_pursue(false),
             "elude" => self.cmd_pursue(true),
-            "warp" | "speed" => {
+            "warp" => {
                 let w = self.number().ok_or("Warp factor (-1 to 20)?")?;
                 orders::helm(self.g, self.me, None, None, Some(w));
                 self.officer(format!("Warp factor {w}."));
@@ -152,17 +336,17 @@ impl<'a> Parser<'a> {
             "damage" => self.cmd_scan_ship(self.me),
             "scan" | "range" | "display" => self.cmd_scan(cmd),
             "fire" => self.cmd_fire(),
-            "phaser" | "phasers" => self.cmd_fire_phasers(),
-            "torp" | "torpedo" | "torpedoes" | "torpedos" => self.cmd_fire_torps(),
-            "probe" | "probes" => self.cmd_fire_probes(),
-            "rail" | "rails" | "railgun" | "railguns" => self.cmd_fire_rails(),
+            "phaser" => self.cmd_fire_phasers(),
+            "torp" => self.cmd_fire_torps(),
+            "probe" => self.cmd_fire_probes(),
+            "rail" => self.cmd_fire_rails(),
             "lock" => self.cmd_lock(),
             "turn" => self.cmd_turn(),
             "load" => self.cmd_load(),
             "unload" => self.cmd_unload(),
             "enable" | "disable" => self.cmd_enable(cmd == "enable"),
             "raise" | "lower" => self.cmd_shields(cmd == "raise"),
-            "reenforce" | "reinforce" => {
+            "reenforce" => {
                 let n = self.number().ok_or("Which shield (1-6)?")? as usize;
                 orders::reinforce_shield(self.g, self.me, Some(n.saturating_sub(1)));
                 self.officer(format!("Reinforcing shield {n}."));
@@ -223,7 +407,7 @@ impl<'a> Parser<'a> {
                     orders::helm(self.g, self.me, Some(c), m, w);
                     return Ok(Outcome::Advance);
                 }
-                Err(format!("Unknown command '{cmd}'.  Try 'help'."))
+                Err(format!("Unknown command '{cmd}'.  Try 'help'.").into())
             }
         }
     }
@@ -265,23 +449,11 @@ impl<'a> Parser<'a> {
             // "fire all phasers/banks/torpedoes/tubes/probes"
             self.i += 1;
         }
-        match self.peek() {
-            Some("phasers" | "phaser" | "banks" | "bank") => {
-                self.i += 1;
-                self.fire_phasers_args(all)
-            }
-            Some("torpedoes" | "torpedos" | "torpedo" | "torp" | "torps" | "tubes" | "tube") => {
-                self.i += 1;
-                self.cmd_fire_torps()
-            }
-            Some("probes" | "probe") => {
-                self.i += 1;
-                self.cmd_fire_probes()
-            }
-            Some("rails" | "railguns" | "rail") => {
-                self.i += 1;
-                self.cmd_fire_rails()
-            }
+        match self.noun(&[BANKS, TUBES, PROBES, RAILS]) {
+            Some("banks") => self.fire_phasers_args(all),
+            Some("tubes") => self.cmd_fire_torps(),
+            Some("probes") => self.cmd_fire_probes(),
+            Some("rails") => self.cmd_fire_rails(),
             _ => Err("Fire what?  (phasers/banks, torpedoes/tubes, probes, rails)".into()),
         }
     }
@@ -289,11 +461,13 @@ impl<'a> Parser<'a> {
     fn cmd_fire_phasers(&mut self) -> R {
         // top-level "phaser all 45" entry
         let mut all = false;
-        while matches!(self.peek(), Some("phasers" | "phaser" | "banks" | "bank" | "all")) {
+        loop {
             if self.peek() == Some("all") {
                 all = true;
+                self.i += 1;
+            } else if self.noun(&[BANKS]).is_none() {
+                break;
             }
-            self.i += 1;
         }
         self.fire_phasers_args(all)
     }
@@ -301,15 +475,17 @@ impl<'a> Parser<'a> {
     /// Manual §VI: `[Fire] Phasers <list> [SPREAD] <spread>`,
     /// `Fire [ALL] Phasers [SPREAD] <spread>` — after ALL any number is the
     /// spread; in list form, numbers >= 10 (SPREAD_MIN, banks never reach
-    /// index 10) are the spread.
+    /// index 10) are the spread. Firing everything without a spread asks
+    /// for one (begin2's second Fire-phasers prompt).
     fn fire_phasers_args(&mut self, mut all: bool) -> R {
         const SPREAD_MIN: f64 = 10.0;
-        while matches!(self.peek(), Some("phasers" | "phaser" | "banks" | "bank")) {
-            self.i += 1;
-        }
-        if self.peek() == Some("all") {
-            all = true;
-            self.i += 1;
+        loop {
+            if self.peek() == Some("all") {
+                all = true;
+                self.i += 1;
+            } else if self.noun(&[BANKS]).is_none() {
+                break;
+            }
         }
         let mut list: Vec<usize> = Vec::new();
         let mut spread: Option<f64> = None;
@@ -320,7 +496,9 @@ impl<'a> Parser<'a> {
                     spread = self.number();
                 }
                 Some(t) => {
-                    let Ok(v) = t.parse::<f64>() else { break };
+                    let Ok(v) = t.parse::<f64>() else {
+                        return Err(format!("'{t}' is not a bank number or spread.").into());
+                    };
                     self.i += 1;
                     if spread.is_none() && (all || v >= SPREAD_MIN) {
                         spread = Some(v);
@@ -331,6 +509,9 @@ impl<'a> Parser<'a> {
                 None => break,
             }
         }
+        if spread.is_none() && (all || list.is_empty()) {
+            return Err(ask("Spread? (10 to 45 degrees)", "45"));
+        }
         let which = if all || list.is_empty() { Mounts::All } else { Mounts::List(list) };
         let n = orders::fire_phasers(self.g, self.me, &which, spread);
         if n == 0 {
@@ -340,11 +521,12 @@ impl<'a> Parser<'a> {
     }
 
     fn cmd_fire_torps(&mut self) -> R {
-        while matches!(
-            self.peek(),
-            Some("all" | "torpedoes" | "torpedos" | "torpedo" | "torps" | "tubes" | "tube")
-        ) {
-            self.i += 1;
+        loop {
+            if self.peek() == Some("all") {
+                self.i += 1;
+            } else if self.noun(&[TUBES]).is_none() {
+                break;
+            }
         }
         let which = self.mounts();
         let n = orders::fire_torpedoes(self.g, self.me, &which);
@@ -355,8 +537,12 @@ impl<'a> Parser<'a> {
     }
 
     fn cmd_fire_probes(&mut self) -> R {
-        if self.peek() == Some("all") {
-            self.i += 1;
+        loop {
+            if self.peek() == Some("all") {
+                self.i += 1;
+            } else if self.noun(&[PROBES]).is_none() {
+                break;
+            }
         }
         let which = self.mounts();
         self.skip_noise();
@@ -390,12 +576,27 @@ impl<'a> Parser<'a> {
         Ok(Outcome::Advance)
     }
 
+    /// Trailing dispersion for lock/turn tubes: a keyword or bare number;
+    /// if the line ran out, ask (begin2's third lock-tubes prompt).
+    fn dispersion(&mut self) -> Result<f64, CmdErr> {
+        if matches!(self.peek(), Some("dispersion" | "spread")) {
+            self.i += 1;
+        }
+        match self.number() {
+            Some(d) => Ok(d),
+            None if self.peek().is_none() => {
+                Err(ask("Dispersion? (degrees across the salvo, 0 for none)", "0"))
+            }
+            None => Ok(0.0),
+        }
+    }
+
     fn cmd_lock(&mut self) -> R {
         if self.peek() == Some("all") {
             self.i += 1;
         }
-        match self.next() {
-            Some("banks" | "bank") => {
+        match self.noun(&[BANKS, TUBES, RAILS, PROBES]) {
+            Some("banks") => {
                 let which = self.mounts();
                 let ship = self.ship()?;
                 if ship == self.me {
@@ -410,7 +611,7 @@ impl<'a> Parser<'a> {
                 self.officer(format!("Banks locked on the {name}."));
                 Ok(Outcome::Advance)
             }
-            Some("tubes" | "tube") => {
+            Some("tubes") => {
                 let which = self.mounts();
                 let ship = self.ship()?;
                 if ship == self.me {
@@ -418,10 +619,7 @@ impl<'a> Parser<'a> {
                 }
                 // `lock tubes on X [dispersion 20]` — fan the salvo (begin2's
                 // third lock-tubes prompt); a bare trailing number counts too
-                if matches!(self.peek(), Some("dispersion" | "spread")) {
-                    self.i += 1;
-                }
-                let disp = self.number().unwrap_or(0.0);
+                let disp = self.dispersion()?;
                 orders::lock_tubes(self.g, self.me, &which, ship, 0.0, disp);
                 let name = self.g.obj(ship).name.clone();
                 self.officer(if disp > 0.0 {
@@ -431,14 +629,14 @@ impl<'a> Parser<'a> {
                 });
                 Ok(Outcome::Advance)
             }
-            Some("rails" | "rail") => {
+            Some("rails") => {
                 let which = self.mounts();
                 let ship = self.ship()?;
                 orders::lock_rails(self.g, self.me, &which, ship);
                 self.officer("Railguns locked.".into());
                 Ok(Outcome::Advance)
             }
-            Some("probe" | "probes") => {
+            Some("probes") => {
                 let code = self.next().ok_or("Which probe (control code)?")?.to_string();
                 let probe = begin_core::systems::probes::probe_by_code(self.g, self.me, &code)
                     .ok_or("No such probe.")?;
@@ -455,24 +653,21 @@ impl<'a> Parser<'a> {
         if self.peek() == Some("all") {
             self.i += 1;
         }
-        match self.next() {
-            Some("banks" | "bank") => {
+        match self.noun(&[BANKS, TUBES, PROBES]) {
+            Some("banks") => {
                 let which = self.mounts();
                 let mark = self.number().ok_or("Mark angle?")?;
                 orders::turn_banks(self.g, self.me, &which, mark);
                 Ok(Outcome::Advance)
             }
-            Some("tubes" | "tube") => {
+            Some("tubes") => {
                 let which = self.mounts();
                 let mark = self.number().ok_or("Mark angle?")?;
-                if matches!(self.peek(), Some("dispersion" | "spread")) {
-                    self.i += 1;
-                }
-                let disp = self.number().unwrap_or(0.0);
+                let disp = self.dispersion()?;
                 orders::turn_tubes(self.g, self.me, &which, mark, disp);
                 Ok(Outcome::Advance)
             }
-            Some("probe" | "probes") => {
+            Some("probes") => {
                 let code = self.next().ok_or("Which probe (control code)?")?.to_string();
                 let probe = begin_core::systems::probes::probe_by_code(self.g, self.me, &code)
                     .ok_or("No such probe.")?;
@@ -484,37 +679,46 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn cmd_load(&mut self) -> R {
-        if self.peek() == Some("all") {
+    /// Proximity/time fuse values after the mount list; if the line ran
+    /// out, ask (begin2's Proximity fuse / Time fuse prompts).
+    fn fuse(&mut self, keywords: &[&str], question: &str) -> Result<f64, CmdErr> {
+        if self.peek().is_some_and(|t| keywords.contains(&t)) {
             self.i += 1;
         }
-        match self.next() {
-            Some("tubes" | "tube" | "all") => {
-                if self.peek() == Some("tubes") {
+        match self.number() {
+            Some(v) => Ok(v),
+            None if self.peek().is_none() => Err(ask(question, "0")),
+            None => Ok(0.0),
+        }
+    }
+
+    fn cmd_load(&mut self) -> R {
+        let all = self.peek() == Some("all");
+        if all {
+            self.i += 1;
+        }
+        let noun = self.noun(&[TUBES, LAUNCHERS]).or(if all { Some("tubes") } else { None });
+        match noun {
+            Some("tubes") => {
+                if self.peek() == Some("all") {
                     self.i += 1;
                 }
-                let which = self.mounts();
-                if matches!(self.peek(), Some("prox" | "proximity")) {
-                    self.i += 1;
-                }
-                let prox = self.number();
-                orders::load_tubes(self.g, self.me, &which, prox);
-                self.officer(match prox {
-                    Some(p) => format!("Loading tubes, proximity {p:.0}."),
-                    None => "Loading tubes.".into(),
+                let which = self.mounts_bounded();
+                let prox = self.fuse(&["prox", "proximity"], "Proximity fuse? (0 for maximum)")?;
+                // 0 = leave the design default (max prox at load time)
+                orders::load_tubes(self.g, self.me, &which, (prox > 0.0).then_some(prox));
+                self.officer(if prox > 0.0 {
+                    format!("Loading tubes, proximity {prox:.0}.")
+                } else {
+                    "Loading tubes.".into()
                 });
                 Ok(Outcome::Advance)
             }
-            Some("launchers" | "launcher" | "probes" | "probe") => {
-                let which = self.mounts();
-                if matches!(self.peek(), Some("prox" | "proximity")) {
-                    self.i += 1;
-                }
-                let prox = self.number().unwrap_or(0.0);
-                if matches!(self.peek(), Some("time" | "fuse")) {
-                    self.i += 1;
-                }
-                let time = self.number().unwrap_or(0.0);
+            Some("launchers") => {
+                let which = self.mounts_bounded();
+                let prox = self.fuse(&["prox", "proximity"], "Proximity fuse? (0 for maximum)")?;
+                let time =
+                    self.fuse(&["time", "fuse"], "Time fuse? (cycles to detonation, 0 for maximum)")?;
                 let n = orders::load_launchers(self.g, self.me, &which, prox, time);
                 if n == 0 {
                     return Err("No launchers could be loaded.".into());
@@ -539,35 +743,37 @@ impl<'a> Parser<'a> {
     }
 
     fn cmd_unload(&mut self) -> R {
-        if self.peek() == Some("all") {
+        let all = self.peek() == Some("all");
+        if all {
             self.i += 1;
         }
-        match self.next() {
-            Some("tubes" | "tube" | "all") => {
-                if self.peek() == Some("tubes") {
+        let noun = self.noun(&[TUBES, LAUNCHERS]).or(if all { Some("tubes") } else { None });
+        match noun {
+            Some("tubes") => {
+                if self.peek() == Some("all") {
                     self.i += 1;
                 }
                 let which = self.mounts();
                 orders::unload_tubes(self.g, self.me, &which);
                 Ok(Outcome::Advance)
             }
-            Some("launchers" | "launcher" | "probes") => {
+            Some("launchers") => {
                 let which = self.mounts();
                 orders::unload_launchers(self.g, self.me, &which);
                 Ok(Outcome::Advance)
             }
-            _ => Err("Unload what?".into()),
+            _ => Err("Unload what?  (tubes, launchers)".into()),
         }
     }
 
     fn cmd_enable(&mut self, enable: bool) -> R {
-        match self.next() {
-            Some("banks" | "bank") => {
+        match self.noun(&[BANKS, TUBES]) {
+            Some("banks") => {
                 let which = self.mounts();
                 orders::enable_banks(self.g, self.me, &which, enable);
                 Ok(Outcome::Advance)
             }
-            Some("tubes" | "tube") => {
+            Some("tubes") => {
                 let which = self.mounts();
                 // tubes enable/disable = allow loading
                 let s = self.g.obj_mut(self.me).ship.as_mut().unwrap();
@@ -583,9 +789,7 @@ impl<'a> Parser<'a> {
     }
 
     fn cmd_shields(&mut self, up: bool) -> R {
-        if matches!(self.peek(), Some("shields" | "shield")) {
-            self.i += 1;
-        }
+        let _ = self.noun(&[SHIELDS]);
         let which = self.mounts();
         orders::set_shields(self.g, self.me, &which, up);
         self.officer(if up { "Shields up.".into() } else { "Shields down.".into() });
@@ -595,15 +799,26 @@ impl<'a> Parser<'a> {
     // ---- status displays (no turn cost) ----
 
     fn cmd_status(&mut self) -> R {
-        match self.next() {
-            Some("damage") | None => self.cmd_scan_ship(self.me),
+        if self.peek().is_none() {
+            return self.cmd_scan_ship(self.me);
+        }
+        match self.noun(&[
+            ("damage", &["damage"]),
+            BANKS,
+            TUBES,
+            ("launchers", &["launcher", "launchers"]),
+            SHIELDS,
+            PROBES,
+            ("fleet", &["fleet"]),
+        ]) {
+            Some("damage") => self.cmd_scan_ship(self.me),
             Some("banks") => self.status_banks(),
             Some("tubes") => self.status_tubes(),
             Some("launchers") => self.status_launchers(),
             Some("shields") => self.status_shields(),
             Some("probes") => self.status_probes(),
             Some("fleet") => self.status_fleet(),
-            Some(x) => Err(format!("No status display for '{x}'.")),
+            _ => Err(format!("No status display for '{}'.", self.peek().unwrap_or("")).into()),
         }
     }
 
@@ -616,7 +831,7 @@ impl<'a> Parser<'a> {
                 return Ok(Outcome::Stay);
             }
         } else {
-            return Err(format!("{cmd} what?"));
+            return Err(format!("{cmd} what?").into());
         }
         let ship = self.ship()?;
         self.cmd_scan_ship(ship)
@@ -659,9 +874,11 @@ impl<'a> Parser<'a> {
         lines.push(format!("CLASS:      {}", d.name));
         lines.push(format!("SURVIVORS:  {}", s.survivors));
         lines.push(String::new());
+        // destroyed systems flash their X's (begin2 blinks them)
+        let xx = |s: &str| -> String { format!("{RBLINK}{s}{RESET}{GREEN}") };
         let pct = |v: &begin_core::object::Sys| -> String {
             if v.destroyed() {
-                " XX ".into()
+                format!("{RBLINK} XX {RESET}{GREEN}")
             } else {
                 format!("{:>3}%", 100 - v.dmg)
             }
@@ -674,13 +891,13 @@ impl<'a> Parser<'a> {
             "BATTERIES:  {}",
             s.batteries
                 .iter()
-                .map(|b| if b.sys.destroyed() { " XX".into() } else { format!("{:>3.0}", b.charge) })
+                .map(|b| if b.sys.destroyed() { xx(" XX") } else { format!("{:>3.0}", b.charge) })
                 .collect::<Vec<_>>()
                 .join(" ")
         ));
         let bank_sym = |b: &begin_core::object::Bank| -> String {
             if b.sys.destroyed() {
-                "XX".into()
+                xx("XX")
             } else if b.charge >= d.banks_charge {
                 "ch".into()
             } else {
@@ -693,7 +910,7 @@ impl<'a> Parser<'a> {
         ));
         let tube_sym = |t: &begin_core::object::Tube| -> String {
             if t.sys.destroyed() {
-                "XX".into()
+                xx("XX")
             } else if t.loaded.is_some() && t.charge >= 100.0 {
                 "ld".into()
             } else {
@@ -709,7 +926,7 @@ impl<'a> Parser<'a> {
             s.launchers
                 .iter()
                 .map(|l| if l.sys.destroyed() {
-                    "XX".to_string()
+                    xx("XX")
                 } else if l.loaded.is_some() {
                     "ld".to_string()
                 } else {
@@ -724,7 +941,7 @@ impl<'a> Parser<'a> {
                 s.rails
                     .iter()
                     .map(|r| if r.sys.destroyed() {
-                        "XX".to_string()
+                        xx("XX")
                     } else if r.charge >= 100.0 {
                         "ch".to_string()
                     } else {
@@ -740,19 +957,22 @@ impl<'a> Parser<'a> {
             s.shields
                 .iter()
                 .map(|sh| if sh.sys.destroyed() {
-                    " XX ".to_string()
+                    xx(" XX ")
                 } else {
                     format!("{:>3.0}%", sh.effective)
                 })
                 .collect::<Vec<_>>()
                 .join(" ")
         ));
+        // damaged warp drives flash (yellow when hurt, red X when gone)
         lines.push(format!(
             "WARP:       {}",
             s.drives
                 .iter()
                 .map(|dr| if dr.sys.destroyed() {
-                    " XX ".to_string()
+                    xx(" XX ")
+                } else if dr.sys.dmg > 0 {
+                    format!("{YBLINK}{:>3}%{RESET}{GREEN}", 100 - dr.sys.dmg)
                 } else {
                     format!("{:>3}%", 100 - dr.sys.dmg)
                 })
@@ -780,9 +1000,6 @@ impl<'a> Parser<'a> {
             "RESIDUAL POWER: {:>+6.0}",
             o.residual
         ));
-        if s.torps_left >= 0 {
-            lines.push(format!("TORPS: {}   PROBES: {}", s.torps_left, s.probes_left));
-        }
         for l in lines {
             self.disp.push(Line::new(format!("{GREEN}{l}{RESET}"), l.chars().count()));
         }
@@ -894,10 +1111,10 @@ impl<'a> Parser<'a> {
             (s.shields.clone(), self.g.data.ships[s.design].shield_strength)
         };
         self.header("SHIELDS STATUS:");
-        self.table_line("Shield  Field  Status   Functional  Effective   Regen.");
+        self.table_line("Shld Field State Functional  Effective   Regen");
         for (k, sh) in rows.iter().enumerate() {
             let line = if sh.sys.destroyed() {
-                format!("{:>4}    {:>4.0}.  damaged  ...  ...    ...  ...     ...", k + 1, sh.facing)
+                format!("{:>3}  {:>4.0}. dmgd    ...  ...    ...  ...    ...", k + 1, sh.facing)
             } else {
                 let func = strength * (100 - sh.sys.dmg) as f64 / 100.0;
                 let eff = strength * sh.effective / 100.0;
@@ -908,7 +1125,7 @@ impl<'a> Parser<'a> {
                 };
                 let regen = sh.strength / 100.0 * self.g.data.ships[self.g.obj(me).ship.as_ref().unwrap().design].shield_recharge;
                 format!(
-                    "{:>4}    {:>4.0}.  {:<6}  {:>4.0}eu {:>3}%  {:>4.0}eu {:>3.0}%  {:.2}%",
+                    "{:>3}  {:>4.0}. {:<5} {:>4.0}eu{:>4}% {:>4.0}eu{:>4.0}% {:>5.2}%",
                     k + 1,
                     sh.facing,
                     state,
@@ -936,7 +1153,7 @@ impl<'a> Parser<'a> {
             return Err("We haven't any probes active.".into());
         }
         self.header("PROBE STATUS:");
-        self.table_line("Code   Course  Bearing  Range  Prox  Time  Status  Range/Target");
+        self.table_line("Code  Crse  Brng  Range Prox Time Target");
         for p in mine {
             let o = self.g.obj(p);
             let st = o.probe.as_ref().unwrap();
@@ -944,17 +1161,19 @@ impl<'a> Parser<'a> {
                 begin_core::systems::helm::target_bearing_mark(self.g, self.me, p, side);
             let range = begin_core::systems::helm::dist(self.g, self.me, p);
             let tgt = o.pursue.and_then(|t| self.g.get(t));
-            let tail = match tgt {
+            let mut tail = match tgt {
                 Some(t) => {
                     let d = (t.pos - o.pos).len();
-                    format!("{:>5.0} {}", d, t.name)
+                    format!("{:.0} {}", d, t.name)
                 }
                 None => "....".into(),
             };
-            let status = if st.arm > 0.0 { format!("arm {:.0}", st.arm) } else { "armed".into() };
+            if st.arm > 0.0 {
+                tail.push_str(&format!(" (arm {:.0})", st.arm));
+            }
             let line = format!(
-                "{:<6} {:>5.0}  {:>6.0}  {:>5.0}  {:>4.0}  {:>4.0}  {:<6}  {}",
-                st.code, o.course, bearing, range, st.prox, st.time, status, tail
+                "{:<5} {:>4.0}  {:>4.0} {:>6.0} {:>4.0} {:>4.0} {}",
+                st.code, o.course, bearing, range, st.prox, st.time, tail
             );
             self.table_line(&line);
         }
@@ -1001,9 +1220,20 @@ impl<'a> Parser<'a> {
     // ---- library computer ----
 
     fn cmd_computer(&mut self) -> R {
-        match self.next() {
+        match self.noun(&[
+            ("ship", &["ship", "ships"]),
+            ("torpedo", &["torp", "torpedo", "torpedoes"]),
+            ("probe", &["probe", "probes"]),
+        ]) {
             Some("ship") => {
                 let nation = self.next().ok_or("Which nation?")?.to_string();
+                // unique prefixes complete ("kli" → Klingon)
+                let nation = self
+                    .g
+                    .data
+                    .nation(&nation)
+                    .map(|n| n.adjective.clone())
+                    .unwrap_or(nation);
                 let rest: Vec<&str> = self.w[self.i..].to_vec();
                 if rest.is_empty() {
                     // list the nation's classes
@@ -1015,7 +1245,7 @@ impl<'a> Parser<'a> {
                         .map(|c| c.name.clone())
                         .collect();
                     if classes.is_empty() {
-                        return Err(format!("Unknown nation '{nation}'."));
+                        return Err(format!("Unknown nation '{nation}'.").into());
                     }
                     let l = classes.join(", ");
                     self.say(&l);
@@ -1148,7 +1378,7 @@ impl<'a> Parser<'a> {
                 self.officer(format!("{k} crew transported."));
                 Ok(Outcome::Advance)
             }
-            Err(e) => Err(format!("Transporter room: {e}")),
+            Err(e) => Err(format!("Transporter room: {e}").into()),
         }
     }
 
@@ -1207,7 +1437,7 @@ impl<'a> Parser<'a> {
             "scanner" | "sensors" => Some(Scanner),
             "impulse" => Some(Impulse),
             "tractor" => Some(Tractor),
-            x => return Err(format!("Unknown system '{x}'.")),
+            x => return Err(format!("Unknown system '{x}'.").into()),
         };
         self.g.obj_mut(self.me).ship.as_mut().unwrap().repair_priority = class;
         self.officer(match class {
@@ -1240,7 +1470,7 @@ impl<'a> Parser<'a> {
                 self.officer(format!("Boarding party of {n} away."));
                 Ok(Outcome::Advance)
             }
-            Err(e) => Err(format!("We can't board: {e}")),
+            Err(e) => Err(format!("We can't board: {e}").into()),
         }
     }
 
@@ -1320,7 +1550,7 @@ impl<'a> Parser<'a> {
                 return Err("They are not answering our hails.".into());
             }
             if ship == self.me {
-                return Err("Talking to ourselves again?".into());
+                return Err("That would be talking to ourselves.".into());
             }
             vec![ship]
         };
@@ -1377,7 +1607,7 @@ impl<'a> Parser<'a> {
         Ok(Outcome::Advance)
     }
 
-    fn parse_order(&mut self) -> Result<OrderKind, String> {
+    fn parse_order(&mut self) -> Result<OrderKind, CmdErr> {
         self.skip_noise();
         let verb = self.next().ok_or("Order them to do what?")?;
         Ok(match verb {
@@ -1433,7 +1663,7 @@ impl<'a> Parser<'a> {
             "defend" => OrderKind::Mission(Mission::Defend { ship: self.ship()? }),
             "recover" => OrderKind::Mission(Mission::Recover { ship: self.ship()? }),
             "eject" => OrderKind::Mission(Mission::Eject { ship: self.ship()? }),
-            x => return Err(format!("They don't understand '{x}'.")),
+            x => return Err(format!("They don't understand '{x}'.").into()),
         })
     }
 

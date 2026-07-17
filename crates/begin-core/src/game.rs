@@ -253,8 +253,6 @@ impl Game {
             tow_bearing: 0.0,
             group: None,
             max_warp_attainable: d.max_warp,
-            torps_left: d.torps_carried as i32,
-            probes_left: d.probes_carried as i32,
             rail_rounds_left: d.rail.as_deref()
                 .and_then(|r| self.data.rail(r))
                 .map(|r| r.rounds as i32 * d.rails.max(1) as i32)

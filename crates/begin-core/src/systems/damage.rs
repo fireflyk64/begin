@@ -343,11 +343,11 @@ pub fn splash_starter(g: &mut Game) {
             Kind::Ship => {
                 let name = g.obj(id).name.clone();
                 let text = if det == Det::Detonate {
-                    format!("The {name} has self destructed!")
+                    format!("*** The {name} has self destructed! ***")
                 } else {
-                    format!("The {name} has been destroyed!")
+                    format!("*** The {name} has been destroyed! ***")
                 };
-                g.say(None, "", text, ReportKind::Alert);
+                g.say(None, "", text, ReportKind::Blink);
             }
             Kind::Probe if det == Det::Detonate => {
                 let code = g.obj(id).probe.as_ref().unwrap().code.clone();

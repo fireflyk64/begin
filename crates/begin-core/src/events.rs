@@ -13,6 +13,8 @@ pub enum ReportKind {
     Alert,
     /// Neutral notices, e.g. "** kdat **" sensor contacts
     Info,
+    /// Critical drama rendered flashing (destruct countdowns, ship losses)
+    Blink,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

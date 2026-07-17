@@ -310,8 +310,6 @@ pub struct Ship {
     pub tow_bearing: f64,              // +69Ah display
     pub group: Option<u32>,            // +6A4h/+6A6h
     pub max_warp_attainable: f64,      // +6A8h cached per cycle
-    pub torps_left: i32,
-    pub probes_left: i32,
     pub rail_rounds_left: i32,
     pub life_failures: i32, // consecutive life-support failures (brain+9Eh)
     pub life_accum: f64,

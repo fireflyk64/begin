@@ -213,24 +213,47 @@ fn main() {
     }
 
     let stdout = std::io::stdout();
-    let draw = |game: &Game, viewer: Option<begin_core::ObjId>, disp: &Display| {
+    let draw = |game: &Game,
+                viewer: Option<begin_core::ObjId>,
+                disp: &Display,
+                prompt: &str,
+                flashes: &[begin_core::events::Flash]| {
         let mut out = stdout.lock();
-        let frame = ui::render(game, viewer, disp, &name, &[]);
+        let frame = ui::render(game, viewer, disp, prompt, flashes);
         let _ = out.write_all(frame.as_bytes());
         let _ = out.flush();
     };
+    // an in-progress prompt for a forgotten argument: (question, prefix, default)
+    let mut pending: Option<(String, String, String)> = None;
     loop {
-        draw(&game, game.get(me).map(|_| me), &disp);
+        let prompt = pending.as_ref().map(|(q, _, _)| q.as_str()).unwrap_or(&name);
+        draw(&game, game.get(me).map(|_| me), &disp, prompt, &[]);
         // read
         let Some(Ok(line)) = lines.next() else { break };
+        let input = match pending.take() {
+            Some((_, prefix, default)) => {
+                let ans = line.trim();
+                let ans = if ans.is_empty() { default } else { ans.to_string() };
+                if ans.is_empty() {
+                    disp.push(ui::Line::plain("(cancelled)"));
+                    continue;
+                }
+                format!("{prefix} {ans}")
+            }
+            None => line.trim().to_string(),
+        };
         let outcome = if game.get(me).is_some() && game.over.is_none() {
-            commands::execute(&mut game, me, &mut disp, line.trim())
+            commands::execute(&mut game, me, &mut disp, &input)
         } else {
             Outcome::Quit
         };
         match outcome {
             Outcome::Quit => break,
             Outcome::Stay => continue,
+            Outcome::Ask { question, prefix, default } => {
+                pending = Some((question, prefix, default));
+                continue;
+            }
             Outcome::Advance => {
                 game.run_cycle();
                 fighters::absorb_docked_fighters(&mut game);
@@ -250,23 +273,22 @@ fn main() {
                     }
                 } else {
                     disp.push(ui::Line::new(
-                        format!("{RED}Your ship has been destroyed.{RESET}"),
+                        format!("{}Your ship has been destroyed.{RESET}", ui::RBLINK),
                         30,
                     ));
                 }
                 // brief weapon-flash frame between cycles
-                if disp.flash && !flashes.is_empty() && alive {
-                    let mut out = stdout.lock();
-                    let frame = ui::render(&game, Some(me), &disp, &name, &flashes);
-                    let _ = out.write_all(frame.as_bytes());
-                    let _ = out.flush();
-                    drop(out);
+                if disp.flash && !flashes.is_empty() && alive && game.over.is_none() {
+                    draw(&game, Some(me), &disp, &name, &flashes);
                     std::thread::sleep(std::time::Duration::from_millis(140));
                 }
                 if !alive || game.over.is_some() {
-                    // show the final events (your destruction included) and
-                    // give the commander a moment before the evaluation
-                    draw(&game, game.get(me).map(|_| me), &disp);
+                    // show the final events (your destruction included) with
+                    // the blast asterisks flashing, and give the commander a
+                    // moment before the evaluation
+                    let fx: &[begin_core::events::Flash] =
+                        if disp.flash { &flashes } else { &[] };
+                    draw(&game, game.get(me).map(|_| me), &disp, &name, fx);
                     std::thread::sleep(std::time::Duration::from_secs(4));
                     break;
                 }
